@@ -1,0 +1,129 @@
+128:         
+129:    
+130:  <div class="
+131:  the 
+132: controller-btn
+133: strong>
+134:  background: #
+135: font-size: 
+136: </div>
+
+137: padding: 
+138:  font-weight: 700
+139: The 
+140: color: #
+141:  margin
+142:  border
+143: px solid #6b6b6b;
+144: .</p>
+145: nte
+146:  a 
+147: nes-header
+148: ESP32
+149:  to
+150: px;
+151: trans
+152: -bottom: 
+153: equest
+154: NES 
+155: tion
+156: ver
+157: width
+158:  re
+159: box
+160: <p>
+161: ed 
+162: </h
+163: height: 
+164: ing
+165: er 
+166: ardware
+167: ompress
+168: 0, 0, 0
+169: title
+170: :</
+171: 0px
+172: rtainment System
+173: <h3>
+174:  you
+175: 8a8a
+176: 9b2323
+177: con
+178:  th
+179: al 
+180: Huffman 
+181:  display
+182: ta 
+183: Web Ser
+184: lin
+185: class="
+186: age
+187: for
+188:  an
+189:  pr
+190:  0 
+191: -radius: 50%;
+192: power-light
+193: ive
+194: str
+195: bit
+196: -top: 
+197:  justify-co
+198: f6f6
+199: : ce
+200: st-child {
+201: ndo
+202: tor
+203: is 
+204: ign
+205: ite
+206: ack
+207: es 
+208: : 1
+209: -shadow:
+210: ead
+211: ="style
+212: body
+213: tain
+214:  <h2>▶ 
+215: tri
+216: ode
+217: rne
+218: 6502
+219:  da
+220: . It
+221: text
+222: re 
+223:  in
+224:  po
+225: ser
+226: ssembly
+227: pac
+228: foot
+229: 111
+230: 5px
+231: 2px
+232:  0.
+233: : 3
+234: : flex;
+235: rectly
+236: origin
+237: 88b7e0
+238: lateY(
+239: tml
+240: ort
+241:  co
+242: sub
+243: er>
+244: sec
+245: wor
+246: as 
+247: it 
+248: tro
+249:  so
+250: vel
+251: rough
+252: unnel
+253: nec
+254: 's 
+255: int

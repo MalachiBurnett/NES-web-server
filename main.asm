@@ -85,9 +85,9 @@ ProcessRequest:
     LDA $02
     ORA $03
     BNE LookupDone
-    LDA #<String404
+    LDA #<Page2
     STA $02
-    LDA #>String404
+    LDA #>Page2
     STA $03
 LookupDone:
     RTS
@@ -96,17 +96,43 @@ LookupDone:
 SendResponse:
     LDY #$00
     LDA ($02), y
-    BEQ RespDone
-    TAX
-    STX $05
-RespLoop:
+    STA $05             ; Length Low
     INY
     LDA ($02), y
+    STA $06             ; Length High
+    
+    ; Send length bytes to Arduino first
+    LDA $05
     JSR SendByte
+    LDA $06
+    JSR SendByte
+
+    LDA $05
+    ORA $06
+    BEQ RespDone        ; If length is 0, done
+
+RespLoop:
+    ; Increment pointer (02, 03) + index Y
+    INY
+    BNE NoWrap
+    INC $03
+NoWrap:
+    LDA ($02), y
+    JSR SendByte
+    
+    ; 16-bit Decrement: $05:$06
+    LDA $05
+    BNE SkipDecHigh
+    DEC $06
+SkipDecHigh:
     DEC $05
+    
+    LDA $05
+    ORA $06
     BNE RespLoop
 RespDone:
     RTS
+
 
 ; --- TURBO Serial Protocol (Unrolled) ---
 SendByte:
@@ -219,13 +245,15 @@ s7: STA $4016
 
 ; --- Data ---
 LookupTable:
-    .dw StringWelcome, StringAbout
-    .dw 0,0,0,0,0,0,0,0
+    .dw Page0, Page1
+    .dw Page2, 0
+    .dw 0, 0
+    .dw 0, 0
+    .dw 0, 0
 
-StringWelcome: .db 12, "HELLO WORLD!"
-StringAbout:   .db 15, "NES WEB SERVER"
-String404:     .db 13, "404 NOT FOUND"
-
+Page0: .db $8b, $00, $32, $0b, $22, $db, $61, $9e, $0b, $c8, $a3, $59, $e6, $97, $39, $7a, $ca, $59, $95, $3a, $29, $41, $a8, $5c, $85, $a2, $40, $58, $97, $52, $93, $63, $a7, $5b, $c5, $a5, $70, $98, $dd, $02, $ef, $6e, $13, $09, $75, $34, $90, $cb, $53, $8a, $bd, $b2, $7c, $91, $00, $31, $a2, $ef, $98, $61, $87, $9d, $c6, $f5, $be, $bb, $b7, $52, $f6, $df, $d7, $2f, $b8, $b2, $bb, $8d, $eb, $79, $58, $61, $87, $9a, $58, $23, $cc, $67, $fc, $a8, $9a, $ee, $dd, $4b, $db, $7f, $5c, $be, $e2, $ca, $c6, $7e, $72, $fe, $7b, $76, $b6, $c4, $d3, $b7, $22, $44, $a7, $8d, $69, $8b, $4f, $58, $26, $f8, $c8, $f8, $cf, $3b, $9b, $4c, $6c, $d6, $df, $14, $ef, $ad, $cc, $2b, $97, $95, $a5, $82, $3c, $ac, $68, $bb, $e0 ; index.html
+Page1: .db $7a, $00, $32, $0b, $22, $db, $61, $9e, $0b, $c8, $a3, $59, $e6, $97, $39, $7a, $ca, $59, $95, $3a, $29, $41, $a8, $5c, $85, $a2, $40, $58, $97, $52, $93, $63, $a7, $5b, $c5, $a5, $70, $98, $dd, $02, $ef, $6e, $13, $09, $75, $34, $90, $cb, $53, $8a, $bd, $b2, $7c, $79, $00, $31, $a2, $ef, $98, $61, $87, $9d, $c6, $f5, $bd, $e5, $2e, $ad, $2b, $b8, $de, $b7, $95, $86, $18, $79, $a5, $82, $3c, $c6, $7e, $f2, $97, $56, $cf, $2b, $15, $8c, $fc, $e5, $f5, $93, $4a, $b1, $d0, $9e, $0d, $87, $c2, $53, $da, $9c, $72, $78, $63, $62, $6f, $a1, $30, $37, $c3, $80, $df, $6e, $49, $5c, $bc, $ad, $2c, $11, $e5, $63, $45, $df ; about.html
+Page2: .db $58, $00, $32, $0b, $22, $db, $61, $9e, $0b, $c8, $a3, $59, $e6, $97, $39, $7a, $ca, $59, $95, $3a, $29, $41, $a8, $5c, $85, $a2, $40, $58, $97, $52, $93, $63, $a7, $5b, $c5, $a5, $70, $98, $dd, $02, $ef, $6e, $13, $09, $75, $34, $90, $cb, $53, $8a, $bd, $b2, $7c, $3b, $00, $31, $a2, $ef, $9a, $58, $23, $cc, $67, $e9, $79, $09, $4a, $c6, $7e, $72, $f7, $a3, $49, $69, $af, $7b, $29, $17, $57, $10, $2b, $97, $95, $a5, $82, $3c, $ac, $68, $bb, $e0 ; 404.html
 .pad $FFFA, $00
 .dw 0, Reset, 0
 .pad $12000, $00
