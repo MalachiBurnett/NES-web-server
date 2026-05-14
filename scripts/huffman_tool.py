@@ -2,6 +2,9 @@ import heapq
 import os
 import re
 
+# Project root is one level up from this scripts/ directory
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class HuffmanNode:
     def __init__(self, char, freq):
         self.char = char
@@ -140,8 +143,8 @@ def generate_arduino_header(header_path, arduino_nodes, root_idx):
     print(f"Generated {header_path}")
 
 def main():
-    asm_path = "main.asm"
-    header_path = "huffman_data.h"
+    asm_path = os.path.join(ROOT, "src", "nes", "main.asm")
+    header_path = os.path.join(ROOT, "src", "firmware", "huffman_data.h")
     
     # Define pages to compress
     pages = {

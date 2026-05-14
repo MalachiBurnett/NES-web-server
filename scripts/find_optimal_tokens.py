@@ -3,6 +3,9 @@ import re
 import heapq
 from collections import Counter
 
+# Project root is one level up from this scripts/ directory
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class HuffmanNode:
     def __init__(self, char, freq):
         self.char = char
@@ -106,6 +109,6 @@ def simulate_compression(text_data, max_tokens_to_test=255):
     print(f"WINNER: {best_k} tokens | Optimal Size: {min_size} bytes")
 
 if __name__ == "__main__":
-    with open("site-to-serve/index.html", "r", encoding="utf-8") as f: html = f.read()
-    with open("site-to-serve/style.css", "r", encoding="utf-8") as f: css = f.read()
+    with open(os.path.join(ROOT, "site-to-serve", "index.html"), "r", encoding="utf-8") as f: html = f.read()
+    with open(os.path.join(ROOT, "site-to-serve", "style.css"), "r", encoding="utf-8") as f: css = f.read()
     simulate_compression(html + "\n" + css)

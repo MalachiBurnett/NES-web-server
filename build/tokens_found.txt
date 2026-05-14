@@ -1,0 +1,132 @@
+128:         
+129:    
+130: <div class="
+131: </div>
+
+132: controller-
+133:  background: #
+134: cart-ridge-
+135: ;
+}
+
+.
+136:  width: 
+137:  display: flex
+138:  height: 
+139:  flex-direction: column
+140: .5em
+141: margin
+142: spacer
+143: cart-
+144: border-
+145: color: #
+146:  the 
+147: left: 
+148: console
+149: strong>
+150: style
+151: font-size: 
+152: -button
+153:  flex: 
+154: 1111
+155: top: 
+156: ent
+157: em;
+158: 4242
+159: 0%;
+160:  class=
+161: wall
+162: t">
+163: padding: 
+164: background-
+165:  position: 
+166: info-box
+167:  align-items: c
+168: cont
+169: width
+170: : 0
+171: radi
+172: righ
+173: </h
+174:  a 
+175: b">
+176: a">
+177: t {
+178: website 
+179: "></dic>
+180: 8A8A
+181: 6B6B
+182: ing
+183: lower-
+184:  to
+185: 88B7E0
+186: cell 
+187: 9B2323
+188: NES 
+189: </p>
+190: ompress
+191: por
+192: lin
+193: ed 
+194: 8383
+195:  solid
+196: roller
+197: thick-
+198: D9D9
+199:  <h
+200: is 
+201: Nintendo
+202: rec
+203:  href="
+204: ain
+205: lef
+206: ESP32
+207: The 
+208: flex
+209: cutou
+210:  <dic
+211: -circle
+212: 0">
+213: s">
+214: ter
+215: dge
+216: 42 50.5%)">
+217: <p>
+218: 11;
+219: : 1
+220: data
+221: f5f5
+222: 5vw;
+223: 1E1E
+224:  re
+225: t, 
+226:  49.5%, #
+227:  serv
+228: it 
+229: reque
+230: ion
+231: HTML/CSS 
+232:  justify-
+233: relative;
+234: absolute;
+235:  through
+236: Huffman 
+237: e-height
+238:  z-index
+239:  <m
+240: body
+241: der
+242: on 
+243:  System
+244: age
+245: are
+246: at 
+247: bas
+248: mid
+249: dow
+250: , which
+251: NHF1
+252: li>
+253: -par
+254:  bo
+255: s {

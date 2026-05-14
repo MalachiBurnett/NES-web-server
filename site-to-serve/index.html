@@ -3,84 +3,193 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>NES Web Server</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+
     <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
-    <div class="container">
-        <header class="nes-header">
-            <div class="power-light"></div>
-            <h1>Nintendo<br>Entertainment System</h1>
-            <p class="subtitle">Web Server</p>
-        </header>
+    <div class="console">
+        <div class="upper-console">
+            <div class="spacer-10"></div>
 
-        <section class="content">
-            <h2>▶ The Simple Story</h2>
-            <div class="box">
-                <h3>My Nintendo is a Web Server?</h3>
-                <p>Yes, you are reading this correctly. Every word on this page was physically retrieved from a 1985
-                    Nintendo Entertainment System. This isn't a simulation or a clever trick—it is real retro hardware
-                    communicating with the modern internet.</p>
+            <div class="content-50">
+                <div style="
+                        border: #838383;
+                        border-style: solid;
+                        border-width: 0 0 0.5em 0.5em;
+                        padding-left: 0.5em
+                    ">
+                    <h3 style="margin: 0">this website is hosted on a</h3>
+                    <h1>Nintendo</h1>
+                    <h2>Entertainment System</h2>
+                </div>
             </div>
 
-            <div class="box">
-                <h3>How it works:</h3>
-                <p>The NES was never designed to talk to the internet, so I built a "translator." When you clicked the
-                    link to this site, your request traveled through a digital tunnel to a tiny computer (an ESP32)
-                    connected directly to the Nintendo's controller port.</p>
-                <p>The ESP32 asks the NES for the data, and the Nintendo's original 1980s processor (the 6502) "shouts"
-                    the code back across a wire. The translator then turns that raw data into the website you see before
-                    you. It's like using a vintage telegraph to send a text message.</p>
+            <div class="controller-port"></div>
+
+            <div class="spacer-20"></div>
+        </div>
+
+        <div class="lower-console small">
+            <div class="spacer-60"></div>
+            <div class="controller-port"></div>
+            <div class="spacer-20"></div>
+        </div>
+
+        <div class="lower-console large">
+
+            <div class="gradient-edge"
+                style="background-image: linear-gradient(to top right, #88B7E0 49.5%, #424242 50.5%)">
             </div>
 
-            <h2>▶ Technical Deep Dive</h2>
-            <div class="box">
-                <h3>The Infrastructure Stack</h3>
-                <p>The journey of a single packet involves several layers of hardware and software translation to bridge
-                    the 40-year gap between the NES and the modern web.</p>
+            <div class="console-links">
+                <a href="https://portfolio.wiizardsoftware.uk/">
+                    <h2 style="margin: 0">Portfolio</h2>
+                </a>
+
+                <a href=""> <!-- TODO: figure out the link to refresh the page -->
+                    <h2 style="margin: 0">Reset</h2>
+                </a>
             </div>
 
-            <div class="box">
-                <h3>1. The Request Path</h3>
-                <p><strong>The Entryway:</strong> A Cloudflare Tunnel provides a secure entry point to a local server.
-                </p>
-                <p><strong>The Proxy:</strong> A reverse proxy receives the HTTP request and forwards the relevant URL
-                    parameters to an ESP32-C3 SuperMini via a high-speed serial-over-USB connection.</p>
-                <p><strong>The Mapping:</strong> The ESP32 maps the requested URL to a unique 8-bit Request ID.</p>
+            <div class="controller-port"></div>
+
+            <div class="spacer-15"></div>
+
+            <div class="gradient-edge"
+                style="background-image: linear-gradient(to top left, #88B7E0 49.5%, #424242 50.5%)">
+            </div>
+        </div>
+
+    </div>
+
+    <main class="info-box">
+        <h3>Wait, is this actually hosted on a Nintendo?</h3>
+        <p>Yes! This website is being served directly from the 8-bit memory of a 1985 Nintendo Entertainment System.
+            Because the NES wasn't designed for the internet, we've given it a "translator"—a tiny ESP32 computer that
+            acts as a bridge between the console and the modern web.</p>
+        <p>The NES holds the website data in a highly compressed format, and when you visit this page, the NES "plays"
+            the data through its controller port to the internet.</p>
+    </main>
+
+    <div class="flex-row">
+        <div class="cart">
+            <div class="cart-left">
+                <div class="cart-spacer"></div>
+                <div class="cart-base">
+                    <div class="cart-cutout"></div>
+                </div>
+            </div>
+            <div class="cart-ridges">
+                <div class="cart-ridge-thick-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-a"></div>
+                <div class="cart-ridge-b"></div>
+                <div class="cart-ridge-thick-a"></div>
+
+            </div>
+            <div class="cart-mid">
+                <div class="cart-label">
+                    <h1 style="font-size: 2em; margin: 0;">NES WEB</h1>
+                    <h2 style="margin: 0;">SERVER v1.0</h2>
+                    <p style="font-size: 0.8em; margin-top: 1em;">HOSTED ON REAL 1985 HARDWARE</p>
+                </div>
+                <div class="icon">&blacktriangledown;</div>
+            </div>
+            <div class="cart-right">
+                <div class="cart-spacer"></div>
+                <div class="cart-base">
+                    <div class="cart-cutout"></div>
+                </div>
+            </div>
+        </div>
+        <div class="content-50 info-box" style="padding: 2em; color: #111111; margin-left: 1em;">
+            <h3>The Hardware Stack</h3>
+            <p>The request flows through a <strong>Cloudflare Tunnel</strong> to a home server, which reverse-proxies
+                the traffic to a USB Serial port.</p>
+            <p>Connected to that port is an <strong>ESP32-C3 Supermini</strong>. The ESP32 communicates with the NES via
+                <strong>Controller Port 1</strong> using a custom bit-banging protocol.
+            </p>
+        </div>
+    </div>
+
+    <main class="info-box">
+        <h3>The NHF1 Compression</h3>
+        <p>To fit a modern website into the NES's limited 32KB ROM banks, we developed the <strong>NES Huffman Format
+                (NHF1)</strong>. It uses two layers of compression:</p>
+        <ul style="line-height: 1.6;">
+            <li><strong>7-bit Dictionary Tokenization:</strong> Common HTML/CSS strings are identified and replaced with
+                single-byte tokens (e.g., &lt;div class= is a single byte).</li>
+            <li><strong>Huffman Coding:</strong> A variable-length bit encoding based on character frequency, further
+                shrinking the tokenized data.</li>
+        </ul>
+        <p>When a request arrives, the NES streams the NHF1 data at "Turbo" speeds to the ESP32, which decompressses it
+            in real-time to serve the HTML/CSS back to your browser.</p>
+    </main>
+
+    <div class="controller">
+        <div class="controller-left">
+            <div class="dpad">
+                <div class="cell up"></div>
+                <div class="cell down"></div>
+                <div class="cell left"></div>
+                <div class="cell right"></div>
+                <div class="cell center"></div>
+
+                <div class="wall wall-u"></div>
+                <div class="wall wall-d"></div>
+                <div class="wall wall-l"></div>
+                <div class="wall wall-r"></div>
             </div>
 
-            <div class="box">
-                <h3>2. Hardware Interfacing</h3>
-                <p><strong>Level Shifting:</strong> The NES operates on 5V logic, while the ESP32 uses 3.3V. To prevent
-                    hardware damage, a voltage divider network using 10k resistors steps down the NES signals to a safe
-                    level for the ESP32.</p>
-                <p><strong>The Interface:</strong> The connection is made through the NES Controller Port. The ESP32
-                    monitors the Latch (OUT0) and Clock (OUT1) lines to synchronize data transfers.</p>
+        </div>
+        <div class="controller-mid">
+            <div class="controller-rect"></div>
+            <dic class="controller-spacer"></dic>
+            <div class="controller-rect"></div>
+            <dic class="controller-spacer"></dic>
+            <div class="controller-rect">
+                <div class="controller-text">
+                    Select Start
+                </div>
             </div>
-
-            <div class="box">
-                <h3>3. The 6502 Kernel & Memory Management</h3>
-                <p><strong>The Assembly Logic:</strong> The NES runs a custom assembly program written in 6502. It stays
-                    in a low-power loop until it receives a strobe signal from the ESP32. Once triggered, it reads the
-                    8-bit Request ID bit-by-bit.</p>
-                <p><strong>Huffman Compression:</strong> Because the NES ROM has very limited space, the website data is
-                    pre-compressed using a Huffman Encoding tool.</p>
-                <p><strong>Data Retrieval:</strong> The NES uses a memory-mapped lookup table to find the compressed
-                    bitstream for the requested page. It then bit-bangs the length-prefixed data back to the ESP32.</p>
-                <p><strong>Final Delivery:</strong> The ESP32 receives the compressed stream, decodes the Huffman tree,
-                    reconstructs the original HTML, and serves it back to the reverse proxy to be displayed in your
-                    browser.</p>
+            <dic class="controller-spacer"></dic>
+            <div class="controller-rect-w-buttons">
+                <div class="controller-S-buttons"></div>
+                <div class="controller-S-buttons"></div>
             </div>
-        </section>
-
-        <footer>
-            <div class="controller-btn">◀</div>
-            <div class="controller-btn">▶</div>
-            <div class="controller-btn a">A</div>
-            <div class="controller-btn b">B</div>
-        </footer>
+            <dic class="controller-spacer"></dic>
+            <div class="controller-rect"></div>
+        </div>
+        <div class="controller-right">
+            <div class="controller-AB-button-parent">
+                <div class="controller-AB-button-circle"></div>
+            </div>
+            <div class="controller-AB-button-parent">
+                <div class="controller-AB-button-circle"></div>
+            </div>
+        </div>
     </div>
 </body>
 

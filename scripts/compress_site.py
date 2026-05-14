@@ -3,6 +3,9 @@ import re
 import heapq
 from collections import Counter
 
+# Project root is one level up from this scripts/ directory
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 class HuffmanNode:
     def __init__(self, char, freq):
         self.char = char
@@ -133,4 +136,8 @@ def compress_site(html_path, css_path, output_path):
     print(f"Final ROM File Size: {os.path.getsize(output_path)} bytes")
 
 if __name__ == "__main__":
-    compress_site("site-to-serve/index.html", "site-to-serve/style.css", "compressed_site.bin")
+    compress_site(
+        os.path.join(ROOT, "site-to-serve", "index.html"),
+        os.path.join(ROOT, "site-to-serve", "style.css"),
+        os.path.join(ROOT, "build", "compressed_site.bin")
+    )

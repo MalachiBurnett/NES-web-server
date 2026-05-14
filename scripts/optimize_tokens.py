@@ -2,6 +2,9 @@ import os
 import re
 from collections import Counter
 
+# Project root is one level up from this scripts/ directory
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 def optimize_tokens(input_text, max_tokens=128, min_length=3, max_length=30):
     current_text = input_text
     dictionary = []
@@ -64,9 +67,9 @@ def optimize_tokens(input_text, max_tokens=128, min_length=3, max_length=30):
 if __name__ == "__main__":
     # Load your files
     try:
-        with open("site-to-serve/index.html", "r", encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "site-to-serve", "index.html"), "r", encoding="utf-8") as f:
             html = f.read()
-        with open("site-to-serve/style.css", "r", encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "site-to-serve", "style.css"), "r", encoding="utf-8") as f:
             css = f.read()
             
         # Combine them as the ESP32 would see them (likely served separately but using the same dictionary)
@@ -75,7 +78,7 @@ if __name__ == "__main__":
         best_tokens = optimize_tokens(combined_text)
         
         # Save results for your ESP32 dictionary
-        with open("tokens_found.txt", "w", encoding="utf-8") as f:
+        with open(os.path.join(ROOT, "build", "tokens_found.txt"), "w", encoding="utf-8") as f:
             for i, token in enumerate(best_tokens):
                 f.write(f"{128+i}: {token}\n")
                 
