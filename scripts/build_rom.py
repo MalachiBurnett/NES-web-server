@@ -74,63 +74,8 @@ def build_rom():
                 content = re.sub(r"\s+", " ", content).strip()
                 
             file_data[filename] = content
-            combined_text += content + "\n"
 
-    # 1. Optimize Tokens (Global Dictionary)
-    print("Optimizing global dictionary...")
-    all_tokens = []
-    placeholders = [chr(i+1000) for i in range(128)]
-    current_text = combined_text
-    for i in range(128):
-        candidates = Counter()
-        segments = re.split("[" + "".join(re.escape(p) for p in placeholders[:i]) + "]", current_text) if i > 0 else [current_text]
-        for segment in segments:
-            if len(segment) < 4: continue
-            for length in range(4, 31):
-                for j in range(len(segment) - length + 1):
-                    candidates[segment[j:j+length]] += 1
-        best_gain, best_token = -1, None
-        for sub, count in candidates.items():
-            gain = (count * (len(sub) - 1)) - len(sub)
-            if gain > best_gain: best_gain, best_token = gain, sub
-        if not best_token or best_gain <= 0: break
-        all_tokens.append(best_token)
-        current_text = current_text.replace(best_token, placeholders[i])
-
-    # For this site, we found 50 tokens is optimal
-    best_tokens = all_tokens[:50]
-    
-    # 2. Huffman Tree (Global)
-    print("Building global Huffman tree...")
-    tokenized_contents = {}
-    total_freqs = Counter()
-    for name, content in file_data.items():
-        t_content = content
-        for i, token in enumerate(best_tokens):
-            t_content = t_content.replace(token, chr(128 + i))
-        bytes_list = [ord(c) for c in t_content]
-        tokenized_contents[name] = bytes_list
-        total_freqs.update(bytes_list)
-    
-    tree = build_huffman_tree(total_freqs)
-    tree_bits = serialize_tree(tree)
-    codes = get_huffman_codes(tree)
-
-    # 3. Assemble Header (Dict + Tree)
-    header = bytearray(b"NHF1")
-    header.append(len(best_tokens))
-    for t in best_tokens:
-        packed = pack_7bit_string(t)
-        header.append(len(t))
-        header.extend(packed)
-    
-    tree_bytes = bytearray()
-    for i in range(0, len(tree_bits), 8):
-        tree_bytes.append(int(tree_bits[i:i+8].ljust(8, '0'), 2))
-    header.extend(len(tree_bits).to_bytes(2, 'little'))
-    header.extend(tree_bytes)
-
-    # 4. Generate data.asm
+    # 4. Generate data.asm (with per-file tokens and Huffman tree)
     with open(os.path.join(ROOT, "build", "data.asm"), "w") as f:
         f.write("; --- AUTOMATICALLY GENERATED DATA ---\n\n")
         f.write("LookupTable:\n")
@@ -140,25 +85,84 @@ def build_rom():
         
         total_compressed_bytes = 0
         total_uncompressed_bytes = 0
+        
         for i, filename in enumerate(files):
             f.write(f"Page{i}:\n")
             content = file_data[filename]
             uncompressed_len = len(content.encode('utf-8'))
             total_uncompressed_bytes += uncompressed_len
+
+            # 1. Optimize Tokens (Per-File Dictionary)
+            print(f"Optimizing dictionary for {filename}...")
+            all_tokens = []
+            placeholders = [chr(i+1000) for i in range(128)]
+            current_text = content
+            for j in range(128):
+                candidates = Counter()
+                segments = re.split("[" + "".join(re.escape(p) for p in placeholders[:j]) + "]", current_text) if j > 0 else [current_text]
+                for segment in segments:
+                    if len(segment) < 4: continue
+                    for length in range(4, 31):
+                        for k in range(len(segment) - length + 1):
+                            candidates[segment[k:k+length]] += 1
+                best_gain, best_token = -1, None
+                for sub, count in candidates.items():
+                    gain = (count * (len(sub) - 1)) - len(sub)
+                    if gain > best_gain: best_gain, best_token = gain, sub
+                if not best_token or best_gain <= 0: break
+                all_tokens.append(best_token)
+                current_text = current_text.replace(best_token, placeholders[j])
+
+            # Brute force optimal token count
+            print(f"Brute forcing optimal token count for {filename}...")
+            best_packet_size = float('inf')
+            best_packet = None
+            best_token_count = 0
             
-            bits = "".join(codes[b] for b in tokenized_contents[filename])
-            payload = bytearray()
-            for j in range(0, len(bits), 8):
-                payload.append(int(bits[j:j+8].ljust(8, '0'), 2))
+            for token_count in range(len(all_tokens) + 1):
+                test_tokens = all_tokens[:token_count]
+                
+                t_content = content.encode('utf-8')
+                for j, token in enumerate(test_tokens):
+                    t_content = t_content.replace(token.encode('utf-8'), bytes([128 + j]))
+                bytes_list = list(t_content)
+                
+                freqs = Counter(bytes_list)
+                tree = build_huffman_tree(freqs)
+                tree_bits = serialize_tree(tree)
+                codes = get_huffman_codes(tree)
+
+                header = bytearray(b"NHF1")
+                header.append(len(test_tokens))
+                for t in test_tokens:
+                    packed = pack_7bit_string(t)
+                    header.append(len(t))
+                    header.extend(packed)
+                
+                tree_bytes = bytearray()
+                for j in range(0, len(tree_bits), 8):
+                    tree_bytes.append(int(tree_bits[j:j+8].ljust(8, '0'), 2))
+                header.extend(len(tree_bits).to_bytes(2, 'little'))
+                header.extend(tree_bytes)
+
+                bits = "".join(codes[b] for b in bytes_list)
+                payload = bytearray()
+                for j in range(0, len(bits), 8):
+                    payload.append(int(bits[j:j+8].ljust(8, '0'), 2))
+                
+                test_packet = bytearray(header)
+                test_packet.extend(len(bytes_list).to_bytes(2, 'little'))
+                test_packet.extend(len(bits).to_bytes(4, 'little'))
+                test_packet.extend(payload)
+                
+                if len(test_packet) < best_packet_size:
+                    best_packet_size = len(test_packet)
+                    best_packet = test_packet
+                    best_token_count = token_count
             
-            # Full Packet = Header + OrigLen (2) + PayloadBitLen (4) + Payload
-            full_packet = bytearray(header)
-            full_packet.extend(len(tokenized_contents[filename]).to_bytes(2, 'little'))
-            full_packet.extend(len(bits).to_bytes(4, 'little'))
-            full_packet.extend(payload)
-            
+            full_packet = best_packet
             total_compressed_bytes += len(full_packet)
-            print(f"File: {filename:12} | Raw: {uncompressed_len:5} B | Compressed: {len(full_packet):5} B ({(len(full_packet)/uncompressed_len)*100:5.1f}%)")
+            print(f"File: {filename:12} | Raw: {uncompressed_len:5} B | Compressed: {len(full_packet):5} B ({(len(full_packet)/uncompressed_len)*100:5.1f}%) | Optimal Tokens: {best_token_count}")
             
             f.write(f"    .dw {len(full_packet)}\n") # Length prefix for NES SendResponse
             # Write in chunks of 16 for readability
@@ -175,7 +179,7 @@ def build_rom():
     if total_uncompressed_bytes > 0:
         savings = (1 - (total_compressed_bytes / total_uncompressed_bytes)) * 100
         print(f"Compression Ratio:  {(total_uncompressed_bytes/total_compressed_bytes):.2f}:1 ({savings:.1f}% saved)")
-    print(f"Injection Complete! data.asm generated with {len(best_tokens)} tokens.")
+    print("Injection Complete! data.asm generated with optimal per-file tokens.")
     print("-" * 40)
 
     # 5. Assemble ROM
