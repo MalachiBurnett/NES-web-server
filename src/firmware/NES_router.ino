@@ -24,11 +24,15 @@ void setup() {
 
 byte receiveByte() {
   byte data = 0;
-  bool lastClock = LOW;
   for (int i = 0; i < 8; i++) {
-    while (digitalRead(PIN_NES_CLOCK) == lastClock); // Wait for edge
+    // Wait for CUP clock to pulse LOW
+    while (digitalRead(PIN_NES_CLOCK) == HIGH);
+    
+    // Read the Data line (Latch / OUT 0)
     data |= (digitalRead(PIN_NES_DATA_IN) << i);
-    lastClock = !lastClock;
+    
+    // Wait for CUP clock to return HIGH
+    while (digitalRead(PIN_NES_CLOCK) == LOW);
   }
   return data;
 }
@@ -122,14 +126,28 @@ void deleteTree(Node* n) {
   delete n;
 }
 
+void sendIdToNes(byte id) {
+  // Wait for NES Latch Strobe (1 then 0)
+  while(digitalRead(PIN_NES_DATA_IN) == LOW);
+  while(digitalRead(PIN_NES_DATA_IN) == HIGH);
+  
+  for (int i = 0; i < 8; i++) {
+    // Set the bit on Data OUT BEFORE the clock pulse happens
+    digitalWrite(PIN_NES_DATA_OUT, (id >> i) & 0x01);
+    
+    // Wait for the CUP clock pulse to finish
+    while(digitalRead(PIN_NES_CLOCK) == HIGH);
+    while(digitalRead(PIN_NES_CLOCK) == LOW);
+  }
+}
+
 void loop() {
   if (Serial.available()) {
     String url = Serial.readStringUntil('\n');
     url.trim();
     if (url.length() > 0) {
-      // Send ID (simplified)
       byte id = (url.indexOf("style") != -1) ? 1 : 0;
-      digitalWrite(PIN_NES_DATA_OUT, id); // Just one bit for now
+      sendIdToNes(id);
       receiveResponse();
     }
   }

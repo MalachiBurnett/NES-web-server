@@ -143,104 +143,56 @@ SendByte:
     BCC s0
     LDA #$01
 s0: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 1
     LDA #$00
     LSR $04
     BCC s1
     LDA #$01
 s1: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 2
     LDA #$00
     LSR $04
     BCC s2
     LDA #$01
 s2: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 3
     LDA #$00
     LSR $04
     BCC s3
     LDA #$01
 s3: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 4
     LDA #$00
     LSR $04
     BCC s4
     LDA #$01
 s4: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 5
     LDA #$00
     LSR $04
     BCC s5
     LDA #$01
 s5: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 6
     LDA #$00
     LSR $04
     BCC s6
     LDA #$01
 s6: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     ; Bit 7
     LDA #$00
     LSR $04
     BCC s7
     LDA #$01
 s7: STA $4016
-    STA $00FE
-    ORA #$02
-    STA $4016
-    STA $00FE
-    AND #$01
-    STA $4016
-    STA $00FE
+    LDA $4016
     RTS
 
 .include "../../build/data.asm"
