@@ -135,16 +135,16 @@
     </div>
 
     <main class="info-box">
-        <h3>The NHF1 Compression</h3>
+        <h3>The NHF2 Compression</h3>
         <p>To fit a modern website into the NES's limited 32KB ROM banks, we developed the <strong>NES Huffman Format
-                (NHF1)</strong>. It uses two layers of compression:</p>
+                (NHF2)</strong>. It uses two layers of compression:</p>
         <ul style="line-height: 1.6;">
             <li><strong>7-bit Dictionary Tokenization:</strong> Common HTML/CSS strings are identified and replaced with
                 single-byte tokens (e.g., &lt;div class= is a single byte).</li>
             <li><strong>Huffman Coding:</strong> A variable-length bit encoding based on character frequency, further
                 shrinking the tokenized data.</li>
         </ul>
-        <p>When a request arrives, the NES streams the NHF1 data at "Turbo" speeds to the ESP32, which decompressses it
+        <p>When a request arrives, the NES streams the NHF2 data at "Turbo" speeds to the ESP32, which decompressses it
             in real-time to serve the HTML/CSS back to your browser.</p>
     </main>
 
@@ -193,4 +193,4 @@
     </div>
 </body>
 
-</html>
+</html>

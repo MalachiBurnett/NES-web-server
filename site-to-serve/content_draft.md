@@ -80,16 +80,16 @@ The request flows through a Cloudflare Tunnel to a home server, which reverse-pr
 
 ---
 
-## 6. Info Box: The NHF1 Compression
+## 6. Info Box: The NHF2 Compression
 
 **Heading:**
 ```text
-The NHF1 Compression
+The NHF2 Compression
 ```
 
 **Paragraph 1:**
 ```text
-To fit a modern website into the NES's limited 32KB ROM banks, I developed the NES Huffman Format (NHF1). It uses two layers of compression:
+To fit a modern website into the NES's limited 32KB ROM banks, I developed the NES Huffman Format (NHF2). It uses two layers of compression:
 ```
 
 **List Items:**
@@ -104,7 +104,7 @@ To fit a modern website into the NES's limited 32KB ROM banks, I developed the N
 
 **Paragraph 2:**
 ```text
-When a request arrives, the NES streams the NHF1 data at "Turbo" speeds to the ESP32, which decompressses it in real-time to serve the HTML/CSS back to your browser.
+When a request arrives, the NES streams the NHF2 data at "Turbo" speeds to the ESP32, which decompressses it in real-time to serve the HTML/CSS back to your browser.
 ```
 
 ---

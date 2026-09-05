@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+# host test binaries
+build/test_gateway
+build/test_gateway.exe
+build/test_rom_link
+build/test_rom_link.exe
+
+# editor/tooling config
+.claude/

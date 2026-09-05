@@ -33,9 +33,11 @@ def deserialize_tree(bits, index):
         node.right = deserialize_tree(bits, index)
         return node
 
+MAGIC = b"NHF2"
+
 def decompress_packet(data_bytes):
-    # data_bytes should start exactly at NHF1
-    if data_bytes[0:4] != b"NHF1":
+    # data_bytes should start exactly at the magic
+    if data_bytes[0:4] != MAGIC:
         raise ValueError("Invalid magic bytes")
     
     idx = 4
@@ -63,9 +65,12 @@ def decompress_packet(data_bytes):
     ptr = [0]
     root = deserialize_tree(tree_bits_str, ptr)
     
-    orig_len = int.from_bytes(data_bytes[idx:idx+2], 'little')
+    symbol_count = int.from_bytes(data_bytes[idx:idx+2], 'little')
     idx += 2
-    
+
+    expanded_len = int.from_bytes(data_bytes[idx:idx+2], 'little')
+    idx += 2
+
     payload_bit_len = int.from_bytes(data_bytes[idx:idx+4], 'little')
     idx += 4
     
@@ -79,18 +84,16 @@ def decompress_packet(data_bytes):
     decoded_bytes = []
     curr = root
     for bit in payload_bits_str:
-        if bit == '0':
-            curr = curr.left
-        else:
-            curr = curr.right
-        
+        if len(decoded_bytes) >= symbol_count:
+            break
+        curr = curr.left if bit == '0' else curr.right
         if curr.char is not None:
             decoded_bytes.append(curr.char)
             curr = root
-            
-    if len(decoded_bytes) != orig_len:
-        print(f"Warning: Decoded length {len(decoded_bytes)} does not match expected {orig_len}")
-        
+
+    if len(decoded_bytes) != symbol_count:
+        print(f"Warning: Decoded {len(decoded_bytes)} symbols, expected {symbol_count}")
+
     # Detokenize
     final_chars = []
     for b in decoded_bytes:
@@ -98,21 +101,25 @@ def decompress_packet(data_bytes):
             final_chars.append(tokens[b - 128])
         else:
             final_chars.append(chr(b))
-            
-    return "".join(final_chars), idx
+
+    result = "".join(final_chars)
+    if len(result) != expanded_len:
+        print(f"Warning: Expanded to {len(result)} bytes, header says {expanded_len}")
+
+    return result, idx
 
 def extract_files_from_rom(rom_path):
     with open(rom_path, 'rb') as f:
         rom_data = f.read()
         
     files = {}
-    file_names = ["index.html", "style.css"]
+    file_names = ["index.html", "style.css", "404.html"]
     
-    # Find all NHF1 headers
+    # Find all packet headers
     offsets = []
     start = 0
     while True:
-        pos = rom_data.find(b"NHF1", start)
+        pos = rom_data.find(MAGIC, start)
         if pos == -1: break
         offsets.append(pos)
         start = pos + 4
@@ -150,10 +157,12 @@ class NESServer(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(self.files[path].encode('utf-8'))
         else:
+            # same fallback the cartridge serves for an unknown page id
+            body = self.files.get("404.html", "404 Not Found")
             self.send_response(404)
             self.send_header('Content-type', 'text/html')
             self.end_headers()
-            self.wfile.write(b"404 Not Found")
+            self.wfile.write(body.encode('utf-8'))
             
     def log_message(self, format, *args):
         # Suppress verbose logging
