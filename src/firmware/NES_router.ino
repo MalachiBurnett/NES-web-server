@@ -20,6 +20,12 @@
 #include <string.h>
 #include "soc/gpio_reg.h"
 
+// Forward declaration: the Arduino builder auto-generates function
+// prototypes at the top of the translation unit, before BitReader's
+// definition below - without this, the generated prototype for
+// parseTree(BitReader&, ...) fails to compile.
+struct BitReader;
+
 // Safe GPIOs on an ESP32-C3 SuperMini: 2/8/9 are strapping pins,
 // 18/19 are the native USB pair, 20/21 are UART0.
 #define PIN_NES_CLOCK     4
