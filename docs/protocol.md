@@ -8,7 +8,7 @@ Two pieces of code implement this and must stay in step:
 | | |
 |---|---|
 | [`src/nes/main.asm`](../src/nes/main.asm) | the cartridge: polls for requests, streams pages back |
-| [`src/firmware/NES_router.ino`](../src/firmware/NES_router.ino) | the gateway: asks for pages, decompresses them, serves them |
+| [`src/firmware/NES_router/NES_router.ino`](../src/firmware/NES_router/NES_router.ino) | the gateway: asks for pages, decompresses them, serves them |
 
 The packet format is produced by [`scripts/build_rom.py`](../scripts/build_rom.py)
 and also read by [`scripts/emulate_rom.py`](../scripts/emulate_rom.py), which
@@ -19,11 +19,18 @@ serves the site straight from a ROM file with no hardware involved.
 Everything goes through **controller port 1**. The ROM never reads `$4017`,
 so port 2 is unused and should be left empty. Three signals plus ground:
 
+> Moving the link to port 2 means changing the three reads of `$4016` to
+> `$4017` *and* physically moving the gateway. The strobe writes stay on
+> `$4016` either way, because OUT0 is one latch line shared by both ports.
+> Beware: an empty port floats and reads back as ones, so a ROM pointed at
+> a port with nothing driving it sees an endless stream of requests for
+> page `$FF`.
+
 | NES port pin | Signal | Direction | ESP32-C3 |
 |---|---|---|---|
 | 1 | GND | — | GND |
 | 2 | CLK | NES → gateway | GPIO4, via level shifter |
-| 3 | OUT0 / latch | NES → gateway | GPIO5, via level shifter |
+| 3 | OUT0 / latch | NES → gateway | GPIO3, via level shifter |
 | 4 | D0 | gateway → NES | GPIO6, direct |
 | 7 | +5V | — | leave disconnected, power the board over USB |
 

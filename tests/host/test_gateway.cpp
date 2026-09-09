@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "arduino_shim.h"
-#include "../../src/firmware/NES_router.ino"
+#include "../../src/firmware/NES_router/NES_router.ino"
 
 // ---------- a minimal NES, enough to exercise the link ----------
 static void nesSetOut0(bool v) {

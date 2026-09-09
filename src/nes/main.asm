@@ -11,8 +11,14 @@
 ;                   read of $4016 (~1 CPU cycle wide, not widenable)
 ;    D0    (pin 4)  gateway -> NES data, read as $4016 bit 0
 ;
-;  $4017 is never read, so port 2 stays free.  See docs/protocol.md
-;  for the full wire format.
+;  $4017 is never read, so port 2 stays free.  Note that an empty
+;  port floats and reads back as ones, so pointing these reads at
+;  a port with nothing driving it looks like a flood of requests
+;  for page $FF.  To move to port 2, change the three reads of
+;  $4016 below to $4017 - the strobe writes stay on $4016, which
+;  is one latch line shared by both ports - and physically move
+;  the gateway.  See docs/protocol.md for the wire format and
+;  docs/status-colours.md for the on-screen codes.
 ; ===================================================================
 
 ; --- iNES Header (NROM-256, 32K PRG, 8K CHR, vertical mirroring) ---
@@ -26,6 +32,17 @@
 ; drop it once the link is proven on your hardware.
 BIT_DELAY    = 4
 STROBE_DELAY = 24               ; ~103us, long enough to poll for
+
+; --- Status colours ------------------------------------------------
+; Written to $3F00.  CHR is blank so every tile draws as colour 0,
+; which makes the whole screen the backdrop colour.  The idle
+; colours pulse between $0x and $1x (EOR #$10) to show the poll
+; loop is still turning - a frozen screen means the ROM has hung.
+COL_BOOT     = $01              ; dark blue  - init done, loop not started
+COL_IDLE     = $0C              ; cyan pulse - idle, nothing served yet
+COL_OK       = $0A              ; green pulse- last request served a page
+COL_404      = $07              ; amber pulse- last request was unknown id
+COL_SEND     = $28              ; yellow     - streaming a response now
 
 .org $8000
 
@@ -49,24 +66,36 @@ v2:
     BIT $2002
     BPL v2
 
-    ; Cyan screen (CHR is blank, so every tile draws as colour 0)
-    LDA #$3F
-    STA $2006
-    LDA #$00
-    STA $2006
-    LDA #$1C
-    STA $2007
-    LDA #$00
-    STA $2006                   ; reset the PPU address latch
-    STA $2006
+    LDA #COL_BOOT               ; visible only if we hang below
+    JSR SetBG
     LDA #$1E
     STA $2001
 
+    LDA #$00
+    STA $07                     ; heartbeat counter
+    LDA #COL_IDLE
+    STA $08                     ; heartbeat base colour
+    JSR SetBG
+
 ServerLoop:
     JSR PollRequest             ; carry set = a request was waiting
-    BCC ServerLoop
-    JSR ProcessRequest
+    BCS GotRequest
+
+    INC $07                     ; idle: pulse the backdrop every 256
+    BNE ServerLoop              ; polls (~0.3s) to prove we are alive
+    LDA $08
+    EOR #$10
+    STA $08
+    JSR SetBG
+    JMP ServerLoop
+
+GotRequest:
+    JSR ProcessRequest          ; also sets $08 to the result colour
+    LDA #COL_SEND
+    JSR SetBG
     JSR SendResponse
+    LDA $08                     ; settle on the result colour
+    JSR SetBG
     JMP ServerLoop
 
 ; --- Poll (gateway -> NES) -----------------------------------------
@@ -115,9 +144,15 @@ PollIdLoop:
 ProcessRequest:
     LDA $01
     CMP #PageCount
-    BCC IdInRange
+    BCS IdUnknown
+    LDX #COL_OK
+    STX $08
+    JMP IdResolved
+IdUnknown:
+    LDX #COL_404
+    STX $08
     LDA #PageCount
-IdInRange:
+IdResolved:
     ASL A
     TAX
     LDA LookupTable, x
@@ -186,6 +221,21 @@ SendBitLow:
     JSR BitDelay
     DEX
     BNE SendBitLoop
+    RTS
+
+; --- Status colour -------------------------------------------------
+; A = palette index, written to the backdrop at $3F00.  Rendering is
+; left on: the screen is a single flat colour, so the scroll glitch a
+; mid-frame $2006 write causes is not visible.
+; Clobbers X.  Preserves A and Y.
+SetBG:
+    LDX #$3F
+    STX $2006
+    LDX #$00
+    STX $2006
+    STA $2007
+    STX $2006                   ; leave the address latch somewhere safe
+    STX $2006
     RTS
 
 ; --- Delays --------------------------------------------------------

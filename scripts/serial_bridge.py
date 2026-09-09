@@ -2,7 +2,7 @@
 
 Point a Cloudflare Tunnel (or any reverse proxy) at this server's port.
 Each request is forwarded to the ESP32 as a single line (its own
-line-based protocol, see NES_router.ino's loop()/serve()), and the raw
+line-based protocol, see NES_router/NES_router.ino's loop()/serve()), and the raw
 HTTP response the ESP32 writes back is relayed to the client unchanged.
 
 The ESP32 handles one request at a time - fetching an uncached page from

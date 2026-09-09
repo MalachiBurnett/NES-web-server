@@ -10,3 +10,6 @@ build/test_rom_link.exe
 
 # editor/tooling config
 .claude/
+
+# bring-up logs
+link-test.log

@@ -1,4 +1,4 @@
-// Just enough of the Arduino API to compile src/firmware/NES_router.ino
+// Just enough of the Arduino API to compile src/firmware/NES_router/NES_router.ino
 // on a PC. The GPIO registers are test doubles (see soc/gpio_reg.h) so
 // the tests can drive the firmware's interrupt handlers directly.
 #pragma once

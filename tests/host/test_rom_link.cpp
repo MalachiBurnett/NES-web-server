@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "arduino_shim.h"
-#include "../../src/firmware/NES_router.ino"
+#include "../../src/firmware/NES_router/NES_router.ino"
 
 // ---------------- 6502 ----------------
 struct Cpu {
@@ -46,7 +46,7 @@ static void portWriteOut0(bool level) {
 }
 
 // A read of $4016 samples D0 (pin 4) and pulses the clock line (pin 2).
-static uint8_t portRead4016() {
+static uint8_t portReadD0() {
   uint8_t bit = (g_gpio_out >> PIN_NES_DATA_OUT) & 1;
   clockPulses++;
   onClock();
@@ -57,7 +57,7 @@ uint8_t Cpu::read(uint16_t addr) {
   if (addr < 0x2000) return ram[addr & 0x7FF];
   if (addr >= 0x8000) return prg[addr - 0x8000];
   if ((addr & 0x2007) == 0x2002) return 0x80;   // vblank always set
-  if (addr == 0x4016) return portRead4016();
+  if (addr == 0x4016) return portReadD0();
   return 0;
 }
 
@@ -110,6 +110,7 @@ void Cpu::step() {
                  r = (r >> 1) | (oc ? 0x80 : 0); write(zp, r); setNZ(r); } break; // ROR zp
     case 0x6A: { bool oc = c; c = a & 1; a = (a >> 1) | (oc ? 0x80 : 0); setNZ(a); } break; // ROR A
     case 0x05: a |= read(fetch()); setNZ(a); break;               // ORA zp
+    case 0x49: a ^= fetch(); setNZ(a); break;                      // EOR #
     case 0x29: a &= fetch(); setNZ(a); break;                     // AND #
     case 0x09: a |= fetch(); setNZ(a); break;                     // ORA #
     case 0xC9: { uint8_t m = fetch(); c = a >= m; setNZ(a - m); } break;       // CMP #

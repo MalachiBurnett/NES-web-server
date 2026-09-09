@@ -1,11 +1,14 @@
 // ===================================================================
 //  NES WEB SERVER - ESP32-C3 gateway
 //
-//  Talks to the cartridge over controller port 1 only.  See
+//  Talks to the cartridge over controller port 1.  The port pinout is
+//  identical either way, so this file needs no change to move ports -
+//  the ROM chooses, by reading $4016 or $4017.  See
 //  docs/protocol.md for the wire format; the short version:
 //
 //    CLK      (port pin 2) input   one falling edge per $4016 read
 //    DATA_IN  (port pin 3) input   OUT0: NES data out + poll strobe
+//                                  -> GPIO 3 (not 5)
 //    DATA_OUT (port pin 4) output  D0: our data into the NES
 //
 //  The clock pulse is only ~0.56us wide - about one 6502 cycle - and
@@ -27,9 +30,15 @@
 struct BitReader;
 
 // Safe GPIOs on an ESP32-C3 SuperMini: 2/8/9 are strapping pins,
-// 18/19 are the native USB pair, 20/21 are UART0.
+// 18/19 are the native USB pair, 20/21 are UART0.  GPIO 3 has no
+// strapping role and is free to use.
+//
+// DATA_IN is on 3, not 5.  An unconnected input next to a switching
+// output couples to it hard enough to look like a shorted wire, so
+// if this ever reads as a copy of DATA_OUT, suspect the pin number
+// before you suspect the solder.
 #define PIN_NES_CLOCK     4
-#define PIN_NES_DATA_IN   5
+#define PIN_NES_DATA_IN   3
 #define PIN_NES_DATA_OUT  6
 
 #define MAX_PACKET      8192   // largest page packet we will accept
