@@ -224,25 +224,35 @@ python scripts/build_rom.py
 python tests/run_tests.py
 ```
 
-`tests/run_tests.py` runs three things:
+`tests/run_tests.py` runs, for both gateways:
 
 1. `build_rom.py`'s encoder against `emulate_rom.py`'s decoder, byte for byte.
-2. `tests/host/test_gateway.cpp` — compiles the real `.ino` for the PC behind
-   a small Arduino shim and checks the decoder, its rejection of malformed
-   packets, and the link layer against half frames, half responses, bad
-   echoes and checksums, contact bounce, and a flash cart menu.
-3. `tests/host/test_rom_link.cpp` — runs the **assembled ROM** on a small 6502
-   core whose `$4016` is wired through a model of the cable to the real
-   firmware's interrupt handlers. It checks every page arrives byte identical,
-   then pulls and replugs the cable at chosen and then random moments in 40
-   fetches, all of which must come through intact.
+2. `tests/host/test_gateway.cpp` and `test_mega_gateway.cpp` — each
+   gateway's real `.ino` compiled for the PC behind a small Arduino shim
+   (`arduino_shim.h`, `avr_shim.h`), through the same link layer tests
+   (`link_tests.h`): half frames, half responses, bad echoes and checksums,
+   contact bounce, and a flash cart menu. The ESP32's decoder, and its
+   rejection of malformed packets, are tested here too.
+3. `tests/host/test_rom_link.cpp` and `test_mega_link.cpp` — the **assembled
+   ROM** on a small 6502 core (`nes_sim.h`) whose `$4016` is wired through a
+   model of the cable to each firmware's interrupt handlers. Every page must
+   arrive byte identical, then the cable is pulled and replugged at chosen
+   and then random moments in 40 fetches, all of which must come through
+   intact.
+4. `serial_bridge.py`, fed the HTTP the Mega firmware wrote in 3, which must
+   decompress every page back to exactly what went into the ROM.
+5. `tests/host/test_mega_avr.cpp`, when `arduino-cli` and the AVR core are
+   installed — the Mega firmware compiled as it would be flashed, run cycle
+   for cycle on an ATmega2560 simulator against the ROM on a 6502 with every
+   port access at its real time. See [`mega.md`](mega.md#timing).
 
-Test 3 exercises the actual shipped bytes on both sides, so a change to the
-timing constants, the frame layout or the packet format shows up immediately.
-Time is modelled only coarsely (instructions, not cycles), which is enough
-because the gateway's thresholds sit an order of magnitude from anything the
-ROM does. Pulse widths, interrupt latency and 5V/3.3V levels can still only
-be proven on hardware.
+Tests 3 to 5 exercise the actual shipped bytes on both sides, so a change to
+the timing constants, the frame layout or the packet format shows up
+immediately. Test 3 models time only coarsely (instructions, not cycles),
+which is enough for the logic because the gateway's thresholds sit an order
+of magnitude from anything the ROM does; test 5 models it exactly, for the
+Mega. Pulse widths, 5V/3.3V levels and the ESP32's real interrupt latency can
+still only be proven on hardware.
 
 To serve the site from a ROM file with no NES at all:
 

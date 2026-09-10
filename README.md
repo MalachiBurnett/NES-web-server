@@ -51,6 +51,11 @@ exactly as they will run on hardware. `test_mega_link.cpp` does the same
 for the Mega port, and its HTTP output is then fed through the real
 `serial_bridge.py`. Both gateways share one set of link layer tests.
 
+With `arduino-cli` installed, `test_mega_avr.cpp` goes further for the Mega:
+it compiles the firmware exactly as it would be flashed and runs it on a
+cycle-accurate ATmega2560 simulator against the ROM, which measures whether
+its interrupt handlers keep up with the NES and by how much.
+
 ## Documentation
 
 | | |

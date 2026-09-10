@@ -5,8 +5,11 @@
      and the Arduino Mega port - through the same link layer tests
   3. the assembled ROM executed on a 6502 core, driving each firmware
   4. serial_bridge.py decompressing what the Mega gateway really sends
+  5. the Mega firmware compiled for real, run cycle for cycle on an
+     ATmega2560 simulator against the ROM on a cycle-counted 6502
 
-Needs python and g++ on PATH, and pyserial for 4. Build the ROM first:
+Needs python and g++ on PATH, pyserial for 4, and arduino-cli with the
+arduino:avr core for 5. Build the ROM first:
 
   python scripts/build_rom.py
   python tests/run_tests.py
@@ -23,6 +26,7 @@ HOST = os.path.join(ROOT, "tests", "host")
 BUILD = os.path.join(ROOT, "build")
 ROM = os.path.join(BUILD, "nes_web_server.nes")
 MEGA_HTTP = os.path.join(BUILD, "mega_http")
+MEGA_FIRMWARE = os.path.join(BUILD, "mega_fw")
 
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import build_rom
@@ -171,6 +175,39 @@ def test_bridge():
     return ok
 
 
+def find_arduino_cli():
+    found = shutil.which("arduino-cli")
+    if found:
+        return found
+    installed = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "arduino-cli", "arduino-cli.exe")
+    return installed if os.path.exists(installed) else None
+
+
+def build_mega_firmware():
+    """Compile NES_router_mega exactly as it would be flashed, for the
+    cycle-accurate simulation. Returns the .elf, None when arduino-cli or
+    the AVR core is not installed, or False when the build fails."""
+    cli = find_arduino_cli()
+    if not cli:
+        print("\narduino-cli not found - skipping the cycle-accurate Mega simulation")
+        return None
+    cores = subprocess.run([cli, "core", "list"], capture_output=True, text=True).stdout
+    if "arduino:avr" not in cores:
+        print("\nno arduino:avr core - skipping the cycle-accurate Mega simulation"
+              " (arduino-cli core install arduino:avr)")
+        return None
+    print("\ncompiling NES_router_mega for the ATmega2560")
+    sys.stdout.flush()
+    built = subprocess.run(
+        [cli, "compile", "--fqbn", "arduino:avr:mega:cpu=atmega2560", "--build-path", MEGA_FIRMWARE,
+         os.path.join(ROOT, "src", "firmware", "NES_router_mega")],
+        capture_output=True, text=True)
+    if built.returncode != 0:
+        print(built.stdout + built.stderr)
+        return False
+    return os.path.join(MEGA_FIRMWARE, "NES_router_mega.ino.elf")
+
+
 def main():
     if not os.path.exists(ROM):
         print("build/nes_web_server.nes missing - run: python scripts/build_rom.py")
@@ -191,6 +228,12 @@ def main():
         ok &= test_bridge()
     else:
         print("\nskipping the serial_bridge.py test: test_mega_link failed")
+
+    elf = build_mega_firmware()
+    if elf is False:
+        ok = False
+    elif elf:
+        ok &= run_cpp("test_mega_avr", elf)
 
     print("\n" + ("=" * 40))
     print("ALL TESTS PASSED" if ok else "TESTS FAILED")

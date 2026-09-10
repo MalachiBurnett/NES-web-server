@@ -109,6 +109,51 @@ mid-response.
 globals, most of it that buffer. If the site grows past the limit, the host
 tests fail before the Mega does.
 
+## Timing
+
+The link is hard real time. After each clock pulse the gateway has until
+the NES next reads `$4016` — about 33 µs on PAL — to put the next bit on D0,
+and it has to read OUT0 before the NES moves it on. An ESP32 has time to
+spare; a 16 MHz AVR, behind the Arduino core's interrupt dispatch, is worth
+checking. [`tests/host/test_mega_avr.cpp`](../tests/host/test_mega_avr.cpp)
+checks it: it runs the compiled firmware on an ATmega2560 simulator, cycle
+for cycle, against the ROM on a 6502 whose every port access lands at its
+real time, and fetches pages through it.
+
+| Worst case over the page fetches | PAL | NTSC |
+|---|---|---|
+| clock pulses, closest together | 33.1 µs | 30.7 µs |
+| CLK edge to its interrupt handler starting | 18.5 µs | 18.7 µs |
+| D0 settled before the NES reads it | 19.9 µs | 16.0 µs |
+| OUT0 read after the NES writes it | 13.2 µs | 13.0 µs |
+| OUT0 read before the NES writes the next bit | 8.7 µs | 6.4 µs |
+| CLK handler, longest run | 21.4 µs | 21.4 µs |
+| RAM left for the stack | 2.8 KB | 2.8 KB |
+
+Across every run, each clock edge got a handler run of its own, and no D0
+change or OUT0 read landed after the NES's next port access.
+
+The tightest is reading OUT0 before the NES writes the next bit. The clock
+handler can start late, because the OUT0 edge's own handler - and a timer or
+serial interrupt - may get in first. Most of each handler is Arduino's
+`attachInterrupt` dispatch and `micros()`.
+
+That leaves about two `BIT_DELAY` steps of slack in the ROM as built. Each
+step takes 7 CPU cycles (~4 µs) off every bit: at 3, OUT0 is still read
+5 µs before the next write; at 2, pages still arrive first time but with
+under a microsecond to spare; at 1, they need retries. So leave `BIT_DELAY`
+at 4 for the Mega.
+
+The test fails well before the link does. With 6 µs of busy-waiting added
+to the clock handler, every page still arrives intact but the margin check
+fails; at 10 µs, reads start landing late and pages need retries.
+
+The simulation models the chips, not the wires: edges are instant, and CLK
+is taken to be low for half a CPU cycle. Through 1 kΩ and a controller
+cable, real edges take well under a microsecond, which moves none of these
+numbers. It runs as part of `python tests/run_tests.py` whenever
+`arduino-cli` and the AVR core are installed.
+
 ## If it does not work
 
 `GET /_link` reports the same edge counts as on the ESP32, but a wire with

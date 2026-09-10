@@ -11,6 +11,11 @@ build/test_mega_gateway
 build/test_mega_gateway.exe
 build/test_mega_link
 build/test_mega_link.exe
+build/test_mega_avr
+build/test_mega_avr.exe
+
+# the Mega firmware, compiled by run_tests.py for test_mega_avr
+build/mega_fw/
 
 # Mega gateway responses saved by test_mega_link for the bridge test
 build/mega_http/

@@ -1,5 +1,5 @@
-// The NES side of the end to end tests: a small 6502 core that runs the
-// real assembled ROM, with $4016 wired through a model of the cable to
+// The NES side of the end to end tests: the 6502 core (cpu6502.h) running
+// the real assembled ROM, with $4016 wired through a model of the cable to
 // a gateway's real interrupt handlers.  Shared by both gateways, so the
 // ESP32 firmware and the Mega port run against the same ROM, cable and
 // hot plug schedule.
@@ -13,38 +13,11 @@
 
 #include <vector>
 
+#include "cpu6502.h"
+
 // Must match main.asm.
 static const uint8_t COL_IDLE = 0x0C, COL_JUNK = 0x06, COL_SEND = 0x28;
 static const uint16_t ZP_ID = 0x00, ZP_COLOUR = 0x08, ZP_RESULT = 0x0B;
-
-// ---------------- 6502 ----------------
-struct Cpu {
-  uint8_t a = 0, x = 0, y = 0, sp = 0xFD;
-  uint16_t pc = 0;
-  bool n = false, z = false, c = false, i = false, d = false, v = false;
-  uint8_t ram[0x800] = {0};
-  std::vector<uint8_t> prg;          // 32K at $8000
-  uint64_t cycles = 0;               // instructions executed
-  bool halted = false;
-  const char *fault = nullptr;
-
-  uint8_t read(uint16_t addr);
-  void write(uint16_t addr, uint8_t val);
-
-  uint8_t fetch() { return read(pc++); }
-  uint16_t fetch16() { uint8_t lo = fetch(); uint8_t hi = fetch(); return lo | (hi << 8); }
-  void push(uint8_t v) { ram[0x100 + sp] = v; sp--; }
-  uint8_t pop() { sp++; return ram[0x100 + sp]; }
-  void setNZ(uint8_t v) { n = v & 0x80; z = (v == 0); }
-  void branch(bool take) { int8_t off = (int8_t)fetch(); if (take) pc += off; }
-  void adc(uint8_t m) {
-    uint16_t r = a + m + (c ? 1 : 0);
-    c = r > 0xFF; v = (~(a ^ m) & (a ^ r) & 0x80) != 0;
-    a = r & 0xFF; setNZ(a);
-  }
-  void step();
-  void reset() { pc = read(0xFFFC) | (read(0xFFFD) << 8); }
-};
 
 static uint32_t rng = 0xC0FFEE;
 static uint32_t rnd() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
@@ -172,95 +145,14 @@ void Cpu::write(uint16_t addr, uint8_t val) {
   // the rest of the PPU and APU is not modelled
 }
 
-void Cpu::step() {
-  uint16_t opAddr = pc;
-  uint8_t op = fetch();
-  switch (op) {
-    case 0x78: i = true; break;                                   // SEI
-    case 0xD8: d = false; break;                                  // CLD
-    case 0x58: i = false; break;                                  // CLI
-    case 0x38: c = true; break;                                   // SEC
-    case 0x18: c = false; break;                                  // CLC
-    case 0xEA: break;                                             // NOP
-    case 0xA9: a = fetch(); setNZ(a); break;                      // LDA #
-    case 0xA2: x = fetch(); setNZ(x); break;                      // LDX #
-    case 0xA0: y = fetch(); setNZ(y); break;                      // LDY #
-    case 0xA5: a = read(fetch()); setNZ(a); break;                // LDA zp
-    case 0xAD: a = read(fetch16()); setNZ(a); break;              // LDA abs
-    case 0xBD: { uint16_t b = fetch16(); a = read(b + x); setNZ(a); } break;  // LDA abs,x
-    case 0xB9: { uint16_t b = fetch16(); a = read(b + y); setNZ(a); } break;  // LDA abs,y
-    case 0xB1: { uint8_t zp = fetch(); uint16_t b = read(zp) | (read((zp + 1) & 0xFF) << 8);
-                 a = read(b + y); setNZ(a); } break;              // LDA (zp),y
-    case 0x85: write(fetch(), a); break;                          // STA zp
-    case 0x8D: write(fetch16(), a); break;                        // STA abs
-    case 0x86: write(fetch(), x); break;                          // STX zp
-    case 0x8E: write(fetch16(), x); break;                        // STX abs
-    case 0x84: write(fetch(), y); break;                          // STY zp
-    case 0x9A: sp = x; break;                                     // TXS
-    case 0xAA: x = a; setNZ(x); break;                            // TAX
-    case 0xA8: y = a; setNZ(y); break;                            // TAY
-    case 0x8A: a = x; setNZ(a); break;                            // TXA
-    case 0x98: a = y; setNZ(a); break;                            // TYA
-    case 0xE8: x++; setNZ(x); break;                              // INX
-    case 0xC8: y++; setNZ(y); break;                              // INY
-    case 0xCA: x--; setNZ(x); break;                              // DEX
-    case 0x88: y--; setNZ(y); break;                              // DEY
-    case 0xE6: { uint8_t zp = fetch(); uint8_t r = read(zp) + 1; write(zp, r); setNZ(r); } break; // INC zp
-    case 0xC6: { uint8_t zp = fetch(); uint8_t r = read(zp) - 1; write(zp, r); setNZ(r); } break; // DEC zp
-    case 0x4A: c = a & 1; a >>= 1; setNZ(a); break;               // LSR A
-    case 0x46: { uint8_t zp = fetch(); uint8_t r = read(zp); c = r & 1; r >>= 1;
-                 write(zp, r); setNZ(r); } break;                 // LSR zp
-    case 0x0A: c = a & 0x80; a <<= 1; setNZ(a); break;            // ASL A
-    case 0x66: { uint8_t zp = fetch(); uint8_t r = read(zp); bool oc = c; c = r & 1;
-                 r = (r >> 1) | (oc ? 0x80 : 0); write(zp, r); setNZ(r); } break; // ROR zp
-    case 0x6A: { bool oc = c; c = a & 1; a = (a >> 1) | (oc ? 0x80 : 0); setNZ(a); } break; // ROR A
-    case 0x05: a |= read(fetch()); setNZ(a); break;               // ORA zp
-    case 0x49: a ^= fetch(); setNZ(a); break;                     // EOR #
-    case 0x45: a ^= read(fetch()); setNZ(a); break;               // EOR zp
-    case 0x29: a &= fetch(); setNZ(a); break;                     // AND #
-    case 0x09: a |= fetch(); setNZ(a); break;                     // ORA #
-    case 0xC9: { uint8_t m = fetch(); c = a >= m; setNZ(a - m); } break;       // CMP #
-    case 0xC5: { uint8_t m = read(fetch()); c = a >= m; setNZ(a - m); } break; // CMP zp
-    case 0xE0: { uint8_t m = fetch(); c = x >= m; setNZ(x - m); } break;       // CPX #
-    case 0xC0: { uint8_t m = fetch(); c = y >= m; setNZ(y - m); } break;       // CPY #
-    case 0xE9: { uint8_t m = fetch(); uint16_t r = a - m - (c ? 0 : 1);
-                 c = !(r & 0x100); v = ((a ^ m) & (a ^ r) & 0x80) != 0;
-                 a = r & 0xFF; setNZ(a); } break;                 // SBC #
-    case 0x69: adc(fetch()); break;                               // ADC #
-    case 0x65: adc(read(fetch())); break;                         // ADC zp
-    case 0x2C: { uint8_t m = read(fetch16()); n = m & 0x80; v = m & 0x40;
-                 z = ((a & m) == 0); } break;                     // BIT abs
-    case 0x24: { uint8_t m = read(fetch()); n = m & 0x80; v = m & 0x40;
-                 z = ((a & m) == 0); } break;                     // BIT zp
-    case 0x10: branch(!n); break;                                 // BPL
-    case 0x30: branch(n); break;                                  // BMI
-    case 0xD0: branch(!z); break;                                 // BNE
-    case 0xF0: branch(z); break;                                  // BEQ
-    case 0x90: branch(!c); break;                                 // BCC
-    case 0xB0: branch(c); break;                                  // BCS
-    case 0x4C: pc = fetch16(); break;                             // JMP abs
-    case 0x20: { uint16_t t = fetch16(); uint16_t r = pc - 1;
-                 push(r >> 8); push(r & 0xFF); pc = t; } break;   // JSR
-    case 0x60: { uint8_t lo = pop(); uint8_t hi = pop();
-                 pc = (lo | (hi << 8)) + 1; } break;              // RTS
-    case 0x40: halted = true; fault = "RTI executed (spurious interrupt)"; break;
-    default: {
-      static char msg[64];
-      snprintf(msg, sizeof msg, "unimplemented opcode $%02X at $%04X", op, opAddr);
-      fault = msg;
-      halted = true;
-    }
-  }
-  cycles++;
-}
-
 // ---------------- simulation ----------------
 static Cpu cpu;
 
 // One instruction, and the time it takes.  Instructions average about
 // 2.5 cycles (0.559us each), so ~1.4us: coarse, but the gateway's
 // thresholds sit an order of magnitude away from anything the ROM
-// does, which is the point of them.
+// does, which is the point of them.  test_mega_avr.cpp is the one
+// that places every bus access at its real time.
 static uint32_t subMicros = 0;
 static void stepNes() {
   cpu.step();
