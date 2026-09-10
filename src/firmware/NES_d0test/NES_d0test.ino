@@ -4,20 +4,24 @@
 //  Companion to src/nes/d0test.asm.  Does one thing: drives the data
 //  line to the NES so you can watch the screen follow it.
 //
-//    1     drive D0 high   -> NES screen should go GREEN
-//    0     drive D0 low    -> NES screen should go RED
-//    sq    1Hz square wave -> screen should alternate
+//    1     NES reads 1 (wire low)   -> screen should go GREEN
+//    0     NES reads 0 (wire high)  -> screen should go RED
+//    sq    1Hz square wave          -> screen should alternate
 //    ?     this list
 //
-//  Prints a status line every 2s.  clkLvl and inLvl are the two NES
-//  input pins, here as a sanity check.  The ROM never strobes OUT0,
-//  so inLvl going high while d0 is high means pins 3 and 4 are
-//  shorted.  Both reading low together is normal and means nothing.
+//  The console inverts D0, as it does for a real pad: a pressed button
+//  pulls the wire low and the game reads 1.  This starts at 0, wire
+//  high, so with it plugged in the screen should be red and a flash
+//  cart menu should behave as though nothing were plugged in at all.
+//
+//  Prints a status line every 2s with the physical wire level, so a
+//  multimeter on NES pin 4 can be checked against it: wire=high should
+//  measure about 3.3V, wire=low about 0V.
 //
 //  Own folder on purpose: Arduino concatenates every .ino in a sketch
 //  folder, so this cannot sit beside the other sketches.
 //
-//  Port 1 wiring, unchanged:
+//  Port 1 wiring:
 //    CLK      (pin 2) -> GPIO 4   via 10k/20k divider
 //    DATA_IN  (pin 3) -> GPIO 3   via 10k/20k divider   (OUT0)
 //    DATA_OUT (pin 4) <- GPIO 6   via 100R series       (D0)
@@ -39,15 +43,25 @@ static inline void pinSet(uint8_t pin, bool level) {
   REG_WRITE(level ? GPIO_OUT_W1TS_REG : GPIO_OUT_W1TC_REG, 1UL << pin);
 }
 
+// The only place that knows the wire is upside down.
+static inline void d0Write(bool nesReads) {
+  pinSet(PIN_NES_DATA_OUT, !nesReads);
+}
+
 bool     square     = false;
 bool     squareHigh = false;
-bool     level      = false;
+bool     reads      = false;     // what the NES reads, not the wire level
 uint32_t lastStatus = 0;
 uint32_t lastToggle = 0;
 
 void help() {
-  Serial.println("# 1 = D0 high (screen GREEN) | 0 = D0 low (screen RED)");
+  Serial.println("# 1 = NES reads 1, screen GREEN | 0 = NES reads 0, screen RED");
   Serial.println("# sq = 1Hz square | ? = this list");
+}
+
+void apply(bool nesReads) {
+  reads = nesReads;
+  d0Write(nesReads);
 }
 
 void setup() {
@@ -56,29 +70,25 @@ void setup() {
   Serial.setTxTimeoutMs(0);   // do not stall when no host is attached
 #endif
 
-  pinMode(PIN_NES_DATA_IN,  INPUT);
-  pinMode(PIN_NES_CLOCK,    INPUT);
+  pinMode(PIN_NES_DATA_IN, INPUT);
+  pinMode(PIN_NES_CLOCK,   INPUT);
+  d0Write(false);                     // latch idle before the driver turns on
   pinMode(PIN_NES_DATA_OUT, OUTPUT);
-  pinSet(PIN_NES_DATA_OUT, 0);
+  apply(false);
 
-  Serial.println("# D0 test online. D0 low, NES should be RED.");
+  Serial.println("# D0 test online. NES reads 0 (wire high), screen should be RED.");
   help();
-}
-
-void apply(bool high) {
-  level = high;
-  pinSet(PIN_NES_DATA_OUT, high);
 }
 
 void loop() {
   if (Serial.available()) {
     String c = Serial.readStringUntil('\n');
     c.trim();
-    if (c == "1")       { square = false; apply(true);  Serial.println("# D0 HIGH  -> expect GREEN"); }
-    else if (c == "0")  { square = false; apply(false); Serial.println("# D0 LOW   -> expect RED"); }
-    else if (c == "sq") { square = true;                Serial.println("# D0 square -> expect alternating"); }
-    else if (c == "?")  { help(); }
-    else if (c.length()) { Serial.printf("# unknown: %s\n", c.c_str()); }
+    if (c == "1")         { square = false; apply(true);  Serial.println("# NES reads 1 (wire low)  -> expect GREEN"); }
+    else if (c == "0")    { square = false; apply(false); Serial.println("# NES reads 0 (wire high) -> expect RED"); }
+    else if (c == "sq")   { square = true;                Serial.println("# square wave -> expect alternating"); }
+    else if (c == "?")    { help(); }
+    else if (c.length())  { Serial.printf("# unknown: %s\n", c.c_str()); }
   }
 
   uint32_t now = millis();
@@ -91,11 +101,11 @@ void loop() {
 
   if (now - lastStatus >= STATUS_MS) {
     lastStatus = now;
-    Serial.printf("d0=%d (%s) | clkLvl=%d inLvl=%d%s\n",
-                  level ? 1 : 0,
-                  level ? "expect GREEN" : "expect RED",
+    Serial.printf("NES reads %d (expect %s) | wire=%s | clkLvl=%d inLvl=%d\n",
+                  reads ? 1 : 0,
+                  reads ? "GREEN" : "RED",
+                  reads ? "low" : "high",
                   pinLevel(PIN_NES_CLOCK)   ? 1 : 0,
-                  pinLevel(PIN_NES_DATA_IN) ? 1 : 0,
-                  (level && pinLevel(PIN_NES_DATA_IN)) ? "   <-- SHORT: inLvl high because d0 is" : "");
+                  pinLevel(PIN_NES_DATA_IN) ? 1 : 0);
   }
 }

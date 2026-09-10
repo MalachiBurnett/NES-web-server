@@ -47,7 +47,8 @@ one large number and then falls back to zero.
 ## Reading each one
 
 **Phase 1 — gateway → NES.** This is the only direction the TV can show
-you directly. With the tester holding D0 low (its default) the screen
+you directly. With the tester idle (its default: the NES reads 0,
+which is the wire held high, because the console inverts D0) the screen
 should be solid red. Send `d0 1` and it should go solid green; `d0 sq`
 and it should alternate about once a second. Clean response means the
 D0 path works end to end. **A restless, random flicker means the line is
@@ -82,8 +83,8 @@ in the log is suspect.
 
 | | |
 |---|---|
-| `d0 0` | hold D0 low — phase 1 should show solid red |
-| `d0 1` | hold D0 high — phase 1 should show solid green |
+| `d0 0` | NES reads 0, wire high — phase 1 should show solid red |
+| `d0 1` | NES reads 1, wire low — phase 1 should show solid green |
 | `d0 sq` | 1 Hz square wave — phase 1 should alternate |
 | `zero` | reset the counters |
 | `?` | command list, and the table above |

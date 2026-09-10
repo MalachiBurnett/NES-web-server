@@ -17,7 +17,10 @@
 //
 //  The NES port is 5V.  The C3 is NOT 5V tolerant: CLK and DATA_IN
 //  need level shifting (a 10k/20k divider is enough for these
-//  speeds).  DATA_OUT can drive the NES directly at 3.3V.
+//  speeds).  DATA_OUT drives the NES directly at 3.3V through 100R.
+//
+//  D0 is INVERTED by the console, as for a real pad: wire low reads as
+//  1.  So an idle gateway holds the wire high.  See d0Write().
 // ===================================================================
 
 #include <string.h>
@@ -59,6 +62,16 @@ static inline void pinSet(uint8_t pin, bool level) {
   REG_WRITE(level ? GPIO_OUT_W1TS_REG : GPIO_OUT_W1TC_REG, 1UL << pin);
 }
 
+// D0 is inverted by the console, exactly as for a real pad: a pressed
+// button pulls the wire low and the game reads a 1.  Everything else
+// in this file speaks in the value the NES will read; this is the only
+// place that knows the wire is upside down.  Idle is "NES reads 0",
+// which means the wire is held HIGH.  Get it backwards and an idle
+// gateway looks like every button held down.
+static inline void d0Write(bool nesReads) {
+  pinSet(PIN_NES_DATA_OUT, !nesReads);
+}
+
 // --- Link layer state (shared with the ISRs) ------------------------
 enum LinkState { LINK_IDLE, LINK_SENDING_ID, LINK_RECEIVING };
 
@@ -86,7 +99,7 @@ uint8_t packetBuf[MAX_PACKET];
 void IRAM_ATTR onStrobe() {
   if (linkState != LINK_IDLE || !requestPending) return;
   idFrame = (uint16_t)(pendingId << 1) | 1;   // bit 0 = "I have a request"
-  pinSet(PIN_NES_DATA_OUT, idFrame & 1);
+  d0Write(idFrame & 1);
   idBit = 1;
   linkState = LINK_SENDING_ID;
   lastEdgeMicros = micros();
@@ -102,10 +115,10 @@ void IRAM_ATTR onClock() {
 
   if (linkState == LINK_SENDING_ID) {
     if (idBit < 9) {
-      pinSet(PIN_NES_DATA_OUT, (idFrame >> idBit) & 1);
+      d0Write((idFrame >> idBit) & 1);
       idBit++;
     } else {
-      pinSet(PIN_NES_DATA_OUT, 0);      // idle low again
+      d0Write(false);                   // back to idle
       requestPending = false;           // the NES has taken it
       rxByte = 0; rxBitCount = 0; rxIndex = 0; rxExpected = 0;
       rxComplete = false; rxOverflow = false;
@@ -152,7 +165,7 @@ void resetLink() {
   rxBitCount = 0;
   rxIndex = 0;
   interrupts();
-  pinSet(PIN_NES_DATA_OUT, 0);
+  d0Write(false);
 }
 
 // --- Packet decoding ------------------------------------------------
@@ -389,8 +402,9 @@ void setup() {
 
   pinMode(PIN_NES_DATA_IN, INPUT);
   pinMode(PIN_NES_CLOCK, INPUT);
+  d0Write(false);                     // latch idle before the driver turns on
   pinMode(PIN_NES_DATA_OUT, OUTPUT);
-  pinSet(PIN_NES_DATA_OUT, 0);
+  d0Write(false);
 
   attachInterrupt(digitalPinToInterrupt(PIN_NES_CLOCK), onClock, FALLING);
   attachInterrupt(digitalPinToInterrupt(PIN_NES_DATA_IN), onStrobe, FALLING);

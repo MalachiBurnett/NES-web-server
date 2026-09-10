@@ -101,8 +101,9 @@ GotRequest:
 ; --- Poll (gateway -> NES) -----------------------------------------
 ; Strobe OUT0, then clock in a 9 bit frame: a ready flag followed by
 ; the 8 bit page id, LSB first.  The gateway arms itself on the
-; falling edge of the strobe and drives D0 low whenever it is idle,
-; so an unanswered poll simply reads back as zero.
+; falling edge of the strobe and holds D0 at 0 whenever it is idle
+; (the console inverts D0, so that is the wire held high), so an
+; unanswered poll simply reads back as zero.
 PollRequest:
     LDA #$01
     STA $4016                   ; latch high

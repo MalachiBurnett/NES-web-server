@@ -47,7 +47,11 @@ static void portWriteOut0(bool level) {
 
 // A read of $4016 samples D0 (pin 4) and pulses the clock line (pin 2).
 static uint8_t portReadD0() {
-  uint8_t bit = (g_gpio_out >> PIN_NES_DATA_OUT) & 1;
+  // The console inverts D0 on its way to the CPU, as it does for a real
+  // pad: wire low reads as 1.  Modelling it is what gives this test
+  // teeth - a gateway with the polarity backwards agrees perfectly with
+  // a non-inverting harness and fails on the real console.
+  uint8_t bit = ((g_gpio_out >> PIN_NES_DATA_OUT) & 1) ^ 1;
   clockPulses++;
   onClock();
   return 0x40 | bit;      // upper bits read as open bus on real hardware

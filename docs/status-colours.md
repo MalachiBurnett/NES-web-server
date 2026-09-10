@@ -26,9 +26,11 @@ means the ROM has hung, whatever colour it is stuck on.**
   `# NES link timeout` also reports.
 - **Never leaves cyan, but the bridge shows no timeout.** Edges are arriving
   but the framing is wrong.
-- **Sits on amber constantly**, without you requesting anything, is the
-  signature of D0 stuck high: every poll reads a ready flag with id `$FF`,
-  which is out of range and falls back to the 404.
+- **Sits on amber constantly**, without you requesting anything, means the
+  NES reads D0 as 1 on every poll: a ready flag with id `$FF`, which is out
+  of range and falls back to the 404. Suspects, most likely first: the
+  gateway holding the wire low (D0 is inverted, so idle must be high), the
+  gateway unpowered, or the ROM reading an empty port.
 - **Green after a page load** is the end-to-end success state. Getting here
   once proves the whole path.
 - **Any colour, not pulsing** — the ROM hung. The colour says where.

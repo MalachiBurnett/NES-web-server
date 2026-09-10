@@ -19,7 +19,7 @@ static void nesSetOut0(bool v) {
 }
 
 static bool nesReadD0() {
-  bool sampled = (g_gpio_out >> PIN_NES_DATA_OUT) & 1;
+  bool sampled = !((g_gpio_out >> PIN_NES_DATA_OUT) & 1);   // console inverts D0
   onClock();
   return sampled;
 }

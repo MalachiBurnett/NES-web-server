@@ -19,11 +19,14 @@
 //  drops back to zero.
 //
 //  Serial commands:
-//    d0 0     hold D0 low     - ROM phase 1 should show solid red
-//    d0 1     hold D0 high    - ROM phase 1 should show solid green
+//    d0 0     NES reads 0     - ROM phase 1 should show solid red
+//    d0 1     NES reads 1     - ROM phase 1 should show solid green
 //    d0 sq    1Hz square      - ROM phase 1 should alternate cleanly
 //    zero     reset counters
 //    ?        command list and what to expect per phase
+//
+//  The console inverts D0, so "NES reads 1" means the wire is low.
+//  The tester starts at NES reads 0, wire high.
 // ===================================================================
 
 #include "soc/gpio_reg.h"
@@ -42,6 +45,16 @@ static inline void pinSet(uint8_t pin, bool level) {
   REG_WRITE(level ? GPIO_OUT_W1TS_REG : GPIO_OUT_W1TC_REG, 1UL << pin);
 }
 
+// D0 is inverted by the console, exactly as for a real pad: a pressed
+// button pulls the wire low and the game reads a 1.  Everything else
+// in this file speaks in the value the NES will read; this is the only
+// place that knows the wire is upside down.  Idle is "NES reads 0",
+// which means the wire is held HIGH.  Get it backwards and an idle
+// gateway looks like every button held down.
+static inline void d0Write(bool nesReads) {
+  pinSet(PIN_NES_DATA_OUT, !nesReads);
+}
+
 // Counted unconditionally - no state machine, nothing to get stuck in.
 volatile uint32_t clkEdges  = 0;
 volatile uint32_t out0Edges = 0;
@@ -56,8 +69,8 @@ uint32_t lastReport = 0;
 uint32_t lastToggle = 0;
 
 const char *d0Name() {
-  if (d0Mode == D0_LOW)  return "low";
-  if (d0Mode == D0_HIGH) return "high";
+  if (d0Mode == D0_LOW)  return "0";
+  if (d0Mode == D0_HIGH) return "1";
   return "sq";
 }
 
@@ -79,13 +92,14 @@ void setup() {
 
   pinMode(PIN_NES_DATA_IN,  INPUT);
   pinMode(PIN_NES_CLOCK,    INPUT);
+  d0Write(false);                     // latch idle before the driver turns on
   pinMode(PIN_NES_DATA_OUT, OUTPUT);
-  pinSet(PIN_NES_DATA_OUT, 0);
+  d0Write(false);
 
   attachInterrupt(digitalPinToInterrupt(PIN_NES_CLOCK),   onClock,  FALLING);
   attachInterrupt(digitalPinToInterrupt(PIN_NES_DATA_IN), onStrobe, FALLING);
 
-  Serial.println("# ESP32-C3 link tester online. D0 held low.");
+  Serial.println("# ESP32-C3 link tester online. NES reads 0 (wire high).");
   help();
 }
 
@@ -95,10 +109,10 @@ void handleCommand(String c) {
 
   if (c == "d0 0") {
     d0Mode = D0_LOW;
-    Serial.println("# D0 held low");
+    Serial.println("# NES reads 0 (wire high)");
   } else if (c == "d0 1") {
     d0Mode = D0_HIGH;
-    Serial.println("# D0 held high");
+    Serial.println("# NES reads 1 (wire low)");
   } else if (c == "d0 sq") {
     d0Mode = D0_SQUARE;
     Serial.println("# D0 1Hz square");
@@ -122,13 +136,13 @@ void loop() {
 
   // --- drive D0 ---
   if (d0Mode == D0_LOW) {
-    pinSet(PIN_NES_DATA_OUT, 0);
+    d0Write(false);
   } else if (d0Mode == D0_HIGH) {
-    pinSet(PIN_NES_DATA_OUT, 1);
+    d0Write(true);
   } else if (now - lastToggle >= SQUARE_HALF_MS) {
     lastToggle = now;
     squareHigh = !squareHigh;
-    pinSet(PIN_NES_DATA_OUT, squareHigh);
+    d0Write(squareHigh);
   }
 
   // --- report ---

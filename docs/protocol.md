@@ -31,11 +31,24 @@ so port 2 is unused and should be left empty. Three signals plus ground:
 | 1 | GND | — | GND |
 | 2 | CLK | NES → gateway | GPIO4, via level shifter |
 | 3 | OUT0 / latch | NES → gateway | GPIO3, via level shifter |
-| 4 | D0 | gateway → NES | GPIO6, direct |
+| 4 | D0 | gateway → NES | GPIO6, 100 Ω series. **Inverted** — see below |
 | 7 | +5V | — | leave disconnected, power the board over USB |
 
 Pin numbering varies between diagrams — find pin 1 and pin 7 with a
 multimeter (ground and +5V) before soldering.
+
+**D0 is inverted by the console.** The data line reaches the CPU through an
+inverting buffer, which is simply how a real pad works: a pressed button
+pulls the wire low and the game reads a 1. So the gateway drives the wire
+*high* to send a 0, *low* to send a 1, and idles high. Get this backwards
+and an idle gateway looks like every button held down: a flash cart menu
+goes haywire the moment it is plugged in, and the ROM sees a request on
+every poll. The firmware keeps the inversion in one place, `d0Write()`;
+everything else is written in terms of the value the NES reads.
+
+Holding the wire high means driving a 5 V console input with 3.3 V. That is
+comfortably inside typical CMOS switching thresholds but has no guaranteed
+margin, so if an idle gateway still reads as a 1, suspect that next.
 
 **The port is 5V and the ESP32-C3 is not 5V tolerant.** CLK and OUT0 are
 driven by the console at 5V and need shifting down; a 10k/20k divider on

@@ -16,8 +16,8 @@ Everything below assumes the gateway is in **controller port 1**.
 
 3. **Controller into port 2**, if you have one, for the flash cart menu.
 
-4. **ESP32 into the laptop's USB.** It boots, drives D0 low, and the port
-   settles. Give it a second.
+4. **ESP32 into the laptop's USB.** It boots and holds D0 at idle — the wire
+   high, which the console reads as 0. Give it a second.
 
 5. **Check the port letter** if this is the first run of the day:
 
@@ -31,7 +31,7 @@ Everything below assumes the gateway is in **controller port 1**.
    real thing, or one of the test ROMs if something is wrong.
 
 8. **Wait for cyan, pulsing.** That is the healthy resting state: the ROM is
-   polling, and D0 is reading low because the gateway is holding it there.
+   polling, and it reads D0 as 0 because the gateway is holding it there.
    Any other colour, check `docs/status-colours.md` before going further.
 
 9. **Start the bridge.**
@@ -87,6 +87,7 @@ at a time — `docs/bring-up.md` explains both. Briefly:
 | Yellow/brown loop on its own | the ROM is reading a port nothing is driving — wrong port, or gateway unpowered |
 | Random flicker, ignores commands | the data line is floating |
 | Menu launches a game untouched | same floating port: it reads as every button held |
+| Menu goes haywire with the gateway plugged in | D0 polarity: the console inverts it, so an idle gateway must hold the wire **high** |
 
 ## Wiring, for reference
 
@@ -97,9 +98,10 @@ Controller port 1, seven pins:
 | 1 | GND | — | GND |
 | 2 | CLK | NES → gateway | GPIO 4, via 10k/20k divider |
 | 3 | OUT0 / latch | NES → gateway | GPIO 3, via 10k/20k divider |
-| 4 | D0 | gateway → NES | GPIO 6, via 100 Ω series |
+| 4 | D0 | gateway → NES | GPIO 6, via 100 Ω series, **inverted** |
 | 7 | +5 V | — | not connected |
 
 The dividers are there because the C3 is a 3.3 V part and the port is 5 V.
 D0 needs no divider — it is an output into a high-impedance NES input, and
-the 100 Ω is just series protection.
+the 100 Ω is just series protection. The console inverts it: wire low reads
+as 1, so the gateway idles with the wire high.
