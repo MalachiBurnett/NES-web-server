@@ -35,8 +35,17 @@ def deserialize_tree(bits, index):
 
 MAGIC = b"NHF2"
 
-def decompress_packet(data_bytes):
-    # data_bytes should start exactly at the magic
+def _problem(strict, message):
+    """A packet that does not decode cleanly: an error when the caller
+    needs the page to be right, a warning when it just wants a look."""
+    if strict:
+        raise ValueError(message)
+    print(f"Warning: {message}")
+
+def decompress_packet(data_bytes, strict=False):
+    # data_bytes should start exactly at the magic.  strict=True raises
+    # ValueError on a packet that does not decode cleanly, rather than
+    # printing a warning and returning what it could.
     if data_bytes[0:4] != MAGIC:
         raise ValueError("Invalid magic bytes")
     
@@ -92,7 +101,7 @@ def decompress_packet(data_bytes):
             curr = root
 
     if len(decoded_bytes) != symbol_count:
-        print(f"Warning: Decoded {len(decoded_bytes)} symbols, expected {symbol_count}")
+        _problem(strict, f"Decoded {len(decoded_bytes)} symbols, expected {symbol_count}")
 
     # Detokenize
     final_chars = []
@@ -104,7 +113,7 @@ def decompress_packet(data_bytes):
 
     result = "".join(final_chars)
     if len(result) != expanded_len:
-        print(f"Warning: Expanded to {len(result)} bytes, header says {expanded_len}")
+        _problem(strict, f"Expanded to {len(result)} bytes, header says {expanded_len}")
 
     return result, idx
 

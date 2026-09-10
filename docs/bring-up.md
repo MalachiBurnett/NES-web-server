@@ -9,6 +9,7 @@ server ROM misbehaves and you need to know *which* line is at fault.
 | NES side | [`src/nes/debug.asm`](../src/nes/debug.asm) → `build/nes_link_test.nes` |
 | smallest test | [`src/nes/d0test.asm`](../src/nes/d0test.asm) → `build/nes_d0_test.nes`, with [`src/firmware/NES_d0test/`](../src/firmware/NES_d0test/) |
 | ESP32 side | [`src/firmware/NES_debug/NES_debug.ino`](../src/firmware/NES_debug/NES_debug.ino) |
+| Arduino Mega side | [`src/firmware/NES_debug_mega/NES_debug_mega.ino`](../src/firmware/NES_debug_mega/NES_debug_mega.ino) — same commands and counters, plus how long each input spent high |
 
 ```bash
 python scripts/build_test_roms.py
@@ -16,6 +17,12 @@ python scripts/build_test_roms.py
 
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --upload -p COM3 src/firmware/NES_debug
+```
+
+or, for the Mega (check its port letter first):
+
+```bash
+arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 --upload -p COM4 src/firmware/NES_debug_mega
 ```
 
 **`CDCOnBoot=cdc` is not optional.** The bare `esp32:esp32:esp32c3` FQBN

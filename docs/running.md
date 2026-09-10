@@ -11,6 +11,10 @@ halfway through a page — and both ends pick themselves back up.
 
 The gateway lives in **controller port 1**.
 
+Using the Arduino Mega gateway instead of the ESP32? The order below is the
+same; its wiring, flashing command and `/_link` readings are in
+[`mega.md`](mega.md).
+
 ## Start up
 
 1. **ESP32 into the laptop's USB.** It boots holding D0 idle — the wire

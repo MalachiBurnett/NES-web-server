@@ -7,6 +7,13 @@ build/test_gateway
 build/test_gateway.exe
 build/test_rom_link
 build/test_rom_link.exe
+build/test_mega_gateway
+build/test_mega_gateway.exe
+build/test_mega_link
+build/test_mega_link.exe
+
+# Mega gateway responses saved by test_mega_link for the bridge test
+build/mega_http/
 
 # editor/tooling config
 .claude/
