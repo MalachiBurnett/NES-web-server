@@ -12,12 +12,15 @@
 ;    D0    (pin 4)  gateway -> NES data, read as $4016 bit 0
 ;
 ;  $4017 is never read, so port 2 stays free.  Note that an empty
-;  port floats and reads back as ones, so pointing these reads at
-;  a port with nothing driving it looks like a flood of requests
-;  for page $FF.  To move to port 2, change the three reads of
-;  $4016 below to $4017 - the strobe writes stay on $4016, which
-;  is one latch line shared by both ports - and physically move
-;  the gateway.  See docs/protocol.md for the wire format and
+;  port floats and reads back as ones.  To move to port 2, change
+;  the reads of $4016 below to $4017 - the strobe writes stay on
+;  $4016, which is one latch line shared by both ports - and
+;  physically move the gateway.
+;
+;  The cable can be plugged in or pulled at any time.  Neither end
+;  trusts the other to have been there a moment ago: every poll is a
+;  fresh start, and a frame that does not check out is thrown away.
+;  See docs/protocol.md for the wire format and
 ;  docs/status-colours.md for the on-screen codes.
 ; ===================================================================
 
@@ -25,24 +28,38 @@
 .db "NES",$1a, $02, $01, $01, $00, 0,0,0,0,0,0,0,0
 
 ; --- Link timing ---------------------------------------------------
-; Delay routines burn 7*n + 16 cycles.  One NES cycle is 0.559us.
-; BIT_DELAY sets the gap between clock pulses: the gateway samples
-; from an interrupt handler, so this has to comfortably exceed its
-; worst case interrupt latency.  4 gives ~37us per bit (~27 kbit/s);
-; drop it once the link is proven on your hardware.
+; Delay routines burn 7*n + 16 cycles.  One cycle is 0.559us on NTSC
+; and 0.601us on PAL; the protocol has no minimum speed, so either
+; works.  BIT_DELAY sets the gap between clock pulses: the gateway
+; samples from an interrupt handler, so this has to comfortably
+; exceed its worst case interrupt latency.  4 gives ~37us per bit.
 BIT_DELAY    = 4
-STROBE_DELAY = 24               ; ~103us, long enough to poll for
+STROBE_DELAY = 24               ; ~103us from the strobe to the first read
 
 ; --- Status colours ------------------------------------------------
 ; Written to $3F00.  CHR is blank so every tile draws as colour 0,
-; which makes the whole screen the backdrop colour.  The idle
-; colours pulse between $0x and $1x (EOR #$10) to show the poll
-; loop is still turning - a frozen screen means the ROM has hung.
+; which makes the whole screen the backdrop colour.  Resting colours
+; pulse between $0x and $1x to show the poll loop is still turning -
+; a frozen screen means the ROM has hung.
 COL_BOOT     = $01              ; dark blue  - init done, loop not started
 COL_IDLE     = $0C              ; cyan pulse - idle, nothing served yet
 COL_OK       = $0A              ; green pulse- last request served a page
 COL_404      = $07              ; amber pulse- last request was unknown id
+COL_JUNK     = $06              ; red pulse  - port reads junk: no gateway
 COL_SEND     = $28              ; yellow     - streaming a response now
+
+; --- Zero page -----------------------------------------------------
+;   $00      page id received from the gateway
+;   $01      its complement, as received
+;   $02-$03  pointer to the page being sent
+;   $04      SendByte shift register
+;   $05-$06  bytes of packet left to send
+;   $07      heartbeat counter
+;   $08      status colour being shown, dark shade
+;   $09-$0A  running checksum: sum1, sum2
+;   $0B      result colour of the last request, shown again once junk clears
+;   $0C      heartbeat phase, $00 or $10
+;   $0D      scratch
 
 .org $8000
 
@@ -73,69 +90,100 @@ v2:
 
     LDA #$00
     STA $07                     ; heartbeat counter
+    STA $0C                     ; heartbeat phase
     LDA #COL_IDLE
-    STA $08                     ; heartbeat base colour
+    STA $08
+    STA $0B
     JSR SetBG
 
 ServerLoop:
-    JSR PollRequest             ; carry set = a request was waiting
+    JSR PollRequest             ; carry set = a request that checked out
     BCS GotRequest
 
-    INC $07                     ; idle: pulse the backdrop every 256
-    BNE ServerLoop              ; polls (~0.3s) to prove we are alive
-    LDA $08
+    INC $07                     ; no request: pulse the backdrop every
+    BNE ServerLoop              ; 256 polls (~0.6s) to prove we are alive
+    LDA $0C
     EOR #$10
-    STA $08
+    STA $0C
+    ORA $08
     JSR SetBG
     JMP ServerLoop
 
 GotRequest:
-    JSR ProcessRequest          ; also sets $08 to the result colour
+    JSR ProcessRequest          ; also sets the result colour
     LDA #COL_SEND
     JSR SetBG
     JSR SendResponse
     LDA $08                     ; settle on the result colour
+    ORA $0C
     JSR SetBG
     JMP ServerLoop
 
 ; --- Poll (gateway -> NES) -----------------------------------------
-; Strobe OUT0, then clock in a 9 bit frame: a ready flag followed by
-; the 8 bit page id, LSB first.  The gateway arms itself on the
-; falling edge of the strobe and holds D0 at 0 whenever it is idle
-; (the console inverts D0, so that is the wire held high), so an
-; unanswered poll simply reads back as zero.
+; Hold OUT0 high on a quiet line for ~2ms, drop it, then clock in a
+; 25 bit frame, LSB first:
+;
+;     8 zeros | ready | id (8 bits) | ~id (8 bits)
+;
+; The quiet hold is how the gateway tells a poll from a data bit: a
+; data edge always has a clock pulse within ~100us of it.  The zeros
+; and the complement are how this end tells a gateway from junk: a
+; floating port reads as ones, and a gateway plugged in partway
+; through a frame hands over half of one.  Neither passes both.
+;
+; An idle gateway holds D0 at 0 (the wire high - the console inverts
+; it), so an unanswered poll reads all zeros.  The zeros up front also
+; keep other software safe: a flash cart menu reads 8 bits per strobe
+; and so never sees a button, even if a request is waiting.
+;
+; Carry set: a request, id in $00.  Carry clear: nothing, or junk.
 PollRequest:
     LDA #$01
-    STA $4016                   ; latch high
-    JSR StrobeDelay
+    STA $4016                   ; OUT0 high, and keep the line quiet
+    JSR HoldDelay
     LDA #$00
-    STA $4016                   ; latch low: the gateway arms here
+    STA $4016                   ; OUT0 low: the gateway arms here
     JSR StrobeDelay
 
-    LDA $4016                   ; bit 0: ready flag
+    LDX #$08
+PollPreamble:
+    LDA $4016
+    LSR A
+    BCS PollJunk                ; a 1 here is not a gateway in step
+    JSR BitDelay
+    DEX
+    BNE PollPreamble
+
+    LDA $4016                   ; ready flag
     LSR A
     BCS PollReady
-
-    LDX #$08                    ; nothing pending, back off ~0.8ms
-PollBackoff:
-    JSR StrobeDelay
-    DEX
-    BNE PollBackoff
+    LDA $0B                     ; a clean idle poll: the line is healthy,
+    STA $08                     ; so drop any junk colour
     CLC
     RTS
 
 PollReady:
-    LDX #$08
+    LDX #$10                    ; id then ~id, 16 bits LSB first
 PollIdLoop:
     JSR BitDelay                ; let the gateway present the bit
     LDA $4016
     LSR A
-    ROR $00                     ; shift in from the top, LSB first
+    ROR $01                     ; shift in from the top of $01:$00
+    ROR $00
     DEX
     BNE PollIdLoop
+
     LDA $00
-    STA $01
+    EOR $01
+    CMP #$FF                    ; id and complement must differ in every bit
+    BNE PollJunk
     SEC
+    RTS
+
+PollJunk:
+    LDA #COL_JUNK
+    STA $08
+    CLC
     RTS
 
 ; --- Lookup Logic --------------------------------------------------
@@ -143,17 +191,17 @@ PollIdLoop:
 ; PageCount real pages followed by the 404 page, so any out of range
 ; id lands on the 404 entry instead of running off the end.
 ProcessRequest:
-    LDA $01
+    LDA $00
     CMP #PageCount
     BCS IdUnknown
     LDX #COL_OK
-    STX $08
     JMP IdResolved
 IdUnknown:
     LDX #COL_404
-    STX $08
     LDA #PageCount
 IdResolved:
+    STX $08
+    STX $0B
     ASL A
     TAX
     LDA LookupTable, x
@@ -163,10 +211,21 @@ IdResolved:
     RTS
 
 ; --- Response Logic ------------------------------------------------
-; Each page is a 16 bit little endian length followed by that many
-; packet bytes.  The length goes out first so the gateway knows how
-; much to buffer.
+;     [id] [length lo] [length hi] [ ... length bytes ... ] [sum1] [sum2]
+;
+; The id is echoed so the gateway knows the response answers its
+; request, and the trailer is a checksum over everything before it
+; (sum1 += byte, sum2 += sum1).  Between them, a response the gateway
+; joined partway through, or lost bits of, is refused rather than
+; taken for a page.  Each page in the ROM is stored as its 16 bit
+; length followed by the packet.
 SendResponse:
+    LDA #$00
+    STA $09
+    STA $0A
+    LDA $00
+    JSR SendByte                ; echo the id we were asked for
+
     LDY #$00
     LDA ($02), y
     STA $05                     ; length low
@@ -181,7 +240,7 @@ SendResponse:
 
     LDA $05
     ORA $06
-    BEQ RespDone                ; empty page, nothing to send
+    BEQ RespTrailer             ; empty page, nothing to send
 
 RespLoop:
     INY
@@ -200,16 +259,29 @@ SkipDecHigh:
     LDA $05
     ORA $06
     BNE RespLoop
-RespDone:
-    RTS
+
+RespTrailer:
+    LDA $0A                     ; sending sum1 moves sum2, so keep a copy
+    STA $0D
+    LDA $09
+    JSR SendByte
+    LDA $0D
+    JMP SendByte
 
 ; --- Byte transmit (NES -> gateway) --------------------------------
-; Data bit onto OUT0, then read $4016 to pulse the clock.  The
-; gateway samples on the falling edge, by which point the data has
-; been stable for several microseconds and stays stable for the rest
-; of the bit period.  Preserves Y for SendResponse; clobbers A and X.
+; Folds the byte into the checksum, then for each bit: data onto
+; OUT0, then read $4016 to pulse the clock.  The gateway samples on
+; the falling edge, by which point the data has been stable for
+; several microseconds and stays stable for the rest of the bit
+; period.  Preserves Y for SendResponse; clobbers A and X.
 SendByte:
     STA $04
+    CLC
+    ADC $09                     ; sum1 += byte
+    STA $09
+    CLC
+    ADC $0A                     ; sum2 += sum1
+    STA $0A
     LDX #$08
 SendBitLoop:
     LDA #$00
@@ -251,6 +323,14 @@ DelayA:
     SBC #$01
     BNE DelayA
     RTS
+
+; ~2ms, two full runs of DelayA.  Long enough that no data bit can be
+; mistaken for the quiet line in front of a poll.
+HoldDelay:
+    LDA #$FF
+    JSR DelayA
+    LDA #$FF
+    JMP DelayA
 
 ; Unused vectors: the ROM never enables NMI or IRQ, but point them
 ; somewhere harmless in case of a soft reset.

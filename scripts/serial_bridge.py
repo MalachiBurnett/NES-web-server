@@ -6,9 +6,10 @@ line-based protocol, see NES_router/NES_router.ino's loop()/serve()), and the ra
 HTTP response the ESP32 writes back is relayed to the client unchanged.
 
 The ESP32 handles one request at a time - fetching an uncached page from
-the NES takes up to ~0.7s (see docs/protocol.md), later hits are served
-instantly from its RAM cache - so requests to the serial port are
-serialised behind a lock rather than sent concurrently.
+the NES takes ~0.7s, longer if the link has to retry, and the gateway gives
+up after 5s (see docs/protocol.md); later hits are served instantly from its
+RAM cache - so requests to the serial port are serialised behind a lock
+rather than sent concurrently.
 
     python scripts/serial_bridge.py --serial-port COM3
     python scripts/serial_bridge.py --serial-port /dev/ttyACM0 --port 8080
@@ -23,7 +24,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import serial
 import serial.tools.list_ports
 
-RESPONSE_TIMEOUT = 8.0   # covers a cold page fetch from the NES (~0.7s) with margin
+RESPONSE_TIMEOUT = 8.0   # covers the gateway's 5s fetch deadline with margin
 LINE_TIMEOUT = 2.0       # max time to wait for any single line while within budget
 
 SERIAL_LOCK = threading.Lock()

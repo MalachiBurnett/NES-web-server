@@ -21,6 +21,10 @@
 //
 //  D0 is INVERTED by the console, as for a real pad: wire low reads as
 //  1.  So an idle gateway holds the wire high.  See d0Write().
+//
+//  The cable can go in or come out at any time.  Every poll from the
+//  NES is a resync point, a request stays pending until a response
+//  checks out, and a line that goes quiet mid-transfer is dropped.
 // ===================================================================
 
 #include <string.h>
@@ -52,7 +56,16 @@ struct BitReader;
 #define NUM_PAGES          3   // index.html, style.css, 404
 #define PAGE_404_ID        2
 
-#define LINK_TIMEOUT_US  500000UL
+// The ROM holds OUT0 high on a quiet line for ~2ms before every poll,
+// and never leaves more than ~100us between clock pulses mid-transfer.
+// So a line this quiet is never mid-transfer, and an OUT0 edge after
+// one is a poll rather than a data bit.
+#define LINK_QUIET_US       1000UL
+#define FETCH_DEADLINE_US   5000000UL   // give up on a page after this
+#define NES_SILENT_US       1000000UL   // no clocks or polls at all: fail fast
+
+// Request frame, LSB first: 8 zeros, ready flag, id, ~id.
+#define FRAME_BITS          25
 
 // --- Raw register GPIO: digitalRead/Write are too slow for the ISR ---
 static inline bool pinLevel(uint8_t pin) {
@@ -75,34 +88,93 @@ static inline void d0Write(bool nesReads) {
 // --- Link layer state (shared with the ISRs) ------------------------
 enum LinkState { LINK_IDLE, LINK_SENDING_ID, LINK_RECEIVING };
 
+enum LinkError : uint8_t {
+  LE_NONE,
+  LE_REJECTED,   // the NES read our request frame and did not act on it
+  LE_CUT,        // clocks stopped partway through a response
+  LE_ECHO,       // the response is for a different page
+  LE_LENGTH,     // length prefix out of range
+  LE_CHECKSUM,   // bits lost or flipped on the way
+};
+
 volatile LinkState linkState = LINK_IDLE;
-volatile bool     requestPending = false;
+volatile bool     requestPending = false;   // held until a response checks out
 volatile uint8_t  pendingId = 0;
 
-volatile uint16_t idFrame = 0;        // ready flag + 8 id bits, LSB first
+volatile uint32_t idFrame = 0;
 volatile uint8_t  idBit = 0;
 
 volatile uint8_t  rxByte = 0;
 volatile uint8_t  rxBitCount = 0;
-volatile uint32_t rxIndex = 0;        // bytes seen, including the 2 length bytes
-volatile uint32_t rxExpected = 0;
+volatile uint32_t rxIndex = 0;        // response bytes so far, echo included
+volatile uint32_t rxExpected = 0;     // packet length, from the prefix
+volatile uint8_t  rxSum1 = 0;
+volatile uint8_t  rxSum2 = 0;
 volatile bool     rxComplete = false;
-volatile bool     rxOverflow = false;
-volatile uint32_t lastEdgeMicros = 0;
+
+volatile uint8_t  linkError = LE_NONE;   // the most recent failure
+volatile uint32_t linkErrors = 0;        // failures since boot
+volatile uint32_t pollCount = 0;         // polls seen since boot
+
+volatile uint32_t lastClockUs = 0;       // last clock edge
+volatile uint32_t lastActivityUs = 0;    // last clock edge or poll
 
 uint8_t packetBuf[MAX_PACKET];
 
-// The NES strobes OUT0 before every poll.  We arm the outgoing frame
-// on that falling edge, which is what keeps the two sides in step -
-// while a response is streaming, OUT0 is carrying data, so we ignore
-// it unless we are idle.
+const char *linkErrorName(uint8_t e) {
+  switch (e) {
+    case LE_REJECTED: return "NES did not accept the request frame";
+    case LE_CUT:      return "response cut short";
+    case LE_ECHO:     return "response was for a different page";
+    case LE_LENGTH:   return "bad length prefix";
+    case LE_CHECKSUM: return "checksum mismatch";
+    default:          return "no error";
+  }
+}
+
+// Drop whatever transfer is under way.  requestPending is left alone,
+// so a request that is still wanted simply goes out on the next poll.
+// Interrupts must be off, or this must be called from an ISR.
+void IRAM_ATTR linkAbort(uint8_t why) {
+  if (why != LE_NONE) {
+    linkError = why;
+    linkErrors++;
+  }
+  linkState = LINK_IDLE;
+  d0Write(false);
+}
+
+// The line went quiet, or a new poll began, before we finished.  A
+// half-sent request frame is nobody's fault - the NES may not be
+// running our ROM, or the cable just went in - but a response that
+// never started means the NES refused the frame, and one that stopped
+// partway means clocks were lost.
+void IRAM_ATTR linkGiveUp() {
+  if (linkState == LINK_RECEIVING)
+    linkAbort(rxIndex == 0 && rxBitCount == 0 ? LE_REJECTED : LE_CUT);
+  else
+    linkAbort(LE_NONE);
+}
+
+// Falling edge on OUT0.  Most of these are data bits: the NES puts
+// every response bit on OUT0 right beside a clock pulse.  A poll is
+// the one OUT0 edge that follows a quiet line, and it is the resync
+// point for everything - whatever we thought was going on, the NES
+// has just started a fresh poll, so start a fresh frame.
 void IRAM_ATTR onStrobe() {
-  if (linkState != LINK_IDLE || !requestPending) return;
-  idFrame = (uint16_t)(pendingId << 1) | 1;   // bit 0 = "I have a request"
+  uint32_t now = micros();
+  if (now - lastClockUs < LINK_QUIET_US) return;   // a data bit, not a poll
+
+  lastActivityUs = now;
+  pollCount++;
+  if (linkState != LINK_IDLE) linkGiveUp();
+  if (!requestPending) return;
+
+  idFrame = (1UL << 8) | ((uint32_t)pendingId << 9) |
+            ((uint32_t)(uint8_t)~pendingId << 17);
   d0Write(idFrame & 1);
   idBit = 1;
   linkState = LINK_SENDING_ID;
-  lastEdgeMicros = micros();
 }
 
 // One falling edge per $4016 read.  The NES samples the line during
@@ -111,49 +183,59 @@ void IRAM_ATTR onStrobe() {
 // for the whole bit period, so sampling here is comfortably inside
 // the valid window.
 void IRAM_ATTR onClock() {
-  lastEdgeMicros = micros();
+  uint32_t now = micros();
+  uint32_t gap = now - lastActivityUs;
+  lastClockUs = now;
+  lastActivityUs = now;
+
+  if (linkState == LINK_IDLE) return;
+  if (gap > LINK_QUIET_US) {        // the NES went quiet and started again
+    linkGiveUp();                   // without a poll we saw: not ours
+    return;
+  }
 
   if (linkState == LINK_SENDING_ID) {
-    if (idBit < 9) {
+    if (idBit < FRAME_BITS) {
       d0Write((idFrame >> idBit) & 1);
       idBit++;
     } else {
-      d0Write(false);                   // back to idle
-      requestPending = false;           // the NES has taken it
+      d0Write(false);               // back to idle, the NES has the frame
       rxByte = 0; rxBitCount = 0; rxIndex = 0; rxExpected = 0;
-      rxComplete = false; rxOverflow = false;
+      rxSum1 = 0; rxSum2 = 0;
       linkState = LINK_RECEIVING;
     }
     return;
   }
 
-  if (linkState != LINK_RECEIVING) return;
-
+  // LINK_RECEIVING: [id] [len lo] [len hi] [packet...] [sum1] [sum2]
   rxByte = (rxByte >> 1) | (pinLevel(PIN_NES_DATA_IN) ? 0x80 : 0x00);  // LSB first
   if (++rxBitCount < 8) return;
   rxBitCount = 0;
 
   uint8_t b = rxByte;
-  rxByte = 0;
+  uint32_t i = rxIndex++;
 
-  if (rxIndex == 0) {
-    rxExpected = b;                     // length low
-  } else if (rxIndex == 1) {
-    rxExpected |= (uint32_t)b << 8;     // length high
-    if (rxExpected == 0 || rxExpected > MAX_PACKET) {
-      rxOverflow = true;
-      linkState = LINK_IDLE;
-      return;
-    }
+  if (i == 0) {
+    if (b != pendingId) { linkAbort(LE_ECHO); return; }
+  } else if (i == 1) {
+    rxExpected = b;
+  } else if (i == 2) {
+    rxExpected |= (uint32_t)b << 8;
+    if (rxExpected == 0 || rxExpected > MAX_PACKET) { linkAbort(LE_LENGTH); return; }
+  } else if (i < rxExpected + 3) {
+    packetBuf[i - 3] = b;
+  } else if (i == rxExpected + 3) {
+    if (b != rxSum1) linkAbort(LE_CHECKSUM);
+    return;                         // the trailer is not part of the sum
   } else {
-    packetBuf[rxIndex - 2] = b;
-    if (rxIndex - 1 >= rxExpected) {
-      rxComplete = true;
-      linkState = LINK_IDLE;
-      return;
-    }
+    if (b != rxSum2) { linkAbort(LE_CHECKSUM); return; }
+    rxComplete = true;
+    requestPending = false;
+    linkState = LINK_IDLE;
+    return;
   }
-  rxIndex++;
+  rxSum1 += b;
+  rxSum2 += rxSum1;
 }
 
 void resetLink() {
@@ -161,11 +243,8 @@ void resetLink() {
   linkState = LINK_IDLE;
   requestPending = false;
   rxComplete = false;
-  rxOverflow = false;
-  rxBitCount = 0;
-  rxIndex = 0;
-  interrupts();
   d0Write(false);
+  interrupts();
 }
 
 // --- Packet decoding ------------------------------------------------
@@ -326,35 +405,66 @@ bool decodePacket(const uint8_t *pkt, uint32_t len, char **out, uint32_t *outLen
 char     *pageCache[NUM_PAGES] = {nullptr, nullptr, nullptr};
 uint32_t  pageLen[NUM_PAGES] = {0, 0, 0};
 
+// Ask the NES for a page and wait for it.  Retrying is automatic: the
+// request stays pending through any failure, so the next poll carries
+// it again.  This loop only watches for a line that has gone quiet
+// mid-transfer, reports what went wrong, and decides when to stop.
 bool fetchPage(uint8_t id) {
   if (id >= NUM_PAGES) id = PAGE_404_ID;
   if (pageCache[id]) return true;
 
-  resetLink();
   noInterrupts();
+  linkState = LINK_IDLE;
+  rxComplete = false;
   pendingId = id;
   requestPending = true;
+  d0Write(false);
+  uint32_t start = micros();
+  uint32_t errorsAtStart = linkErrors;
+  uint32_t pollsAtStart = pollCount;
   interrupts();
 
-  uint32_t start = micros();
-  lastEdgeMicros = start;
-  while (!rxComplete && !rxOverflow) {
-    if (micros() - lastEdgeMicros > LINK_TIMEOUT_US) {
-      resetLink();
-      Serial.println("# NES link timeout");
-      return false;
+  uint32_t errorsSeen = errorsAtStart;
+  bool silent = false, expired = false;
+
+  for (;;) {
+    noInterrupts();
+    uint32_t now = micros();
+    if (linkState != LINK_IDLE && now - lastActivityUs > LINK_QUIET_US)
+      linkGiveUp();                 // cable pulled, or the NES stopped
+    bool done = rxComplete;
+    uint32_t errors = linkErrors;
+    uint8_t lastError = linkError;
+    uint32_t quietFor = now - lastActivityUs;
+    interrupts();
+
+    if (done) break;
+    if (errors != errorsSeen) {
+      errorsSeen = errors;
+      Serial.printf("# link: %s, retrying\n", linkErrorName(lastError));
     }
+    if (now - start > NES_SILENT_US && quietFor > NES_SILENT_US) { silent = true; break; }
+    if (now - start > FETCH_DEADLINE_US) { expired = true; break; }
     delayMicroseconds(200);
   }
 
-  if (rxOverflow) {
+  uint32_t ms = (micros() - start) / 1000;
+  if (silent || expired) {
     resetLink();
-    Serial.println("# bad packet length from NES");
+    if (silent)
+      Serial.printf("# NES link timeout: port silent for %lu ms - cable out, NES off, or ROM not running\n",
+                    (unsigned long)(NES_SILENT_US / 1000));
+    else
+      Serial.printf("# NES link timeout: %lu polls, %lu link errors, no good response in %lu ms\n",
+                    (unsigned long)(pollCount - pollsAtStart),
+                    (unsigned long)(linkErrors - errorsAtStart), (unsigned long)ms);
     return false;
   }
 
+  noInterrupts();
   uint32_t len = rxExpected;
   rxComplete = false;
+  interrupts();
 
   char *text;
   uint32_t textLen;
@@ -362,9 +472,31 @@ bool fetchPage(uint8_t id) {
 
   pageCache[id] = text;
   pageLen[id] = textLen;
-  Serial.printf("# page %u: %u byte packet -> %u bytes in %lu ms\n",
-                id, len, textLen, (unsigned long)((micros() - start) / 1000));
+  Serial.printf("# page %u: %lu byte packet -> %lu bytes in %lu ms, %lu retries\n",
+                id, (unsigned long)len, (unsigned long)textLen, (unsigned long)ms,
+                (unsigned long)(linkErrors - errorsAtStart));
   return true;
+}
+
+// Report the port coming and going, so a hot plug shows up in the log
+// even when nothing is being fetched.  Any software that strobes the
+// port counts - a flash cart menu as much as the web server ROM.
+void watchLink() {
+  static bool active = false;
+  static uint32_t lastPolls = 0, lastSeen = 0;
+  uint32_t now = micros();
+  uint32_t polls = pollCount;
+  if (polls != lastPolls) {
+    lastPolls = polls;
+    lastSeen = now;
+    if (!active) {
+      active = true;
+      Serial.println("# NES port active");
+    }
+  } else if (active && now - lastSeen > NES_SILENT_US) {
+    active = false;
+    Serial.println("# NES port quiet - cable out, NES off, or nothing polling");
+  }
 }
 
 // --- HTTP over the serial link to the host --------------------------
@@ -413,6 +545,7 @@ void setup() {
 }
 
 void loop() {
+  watchLink();
   if (!Serial.available()) return;
 
   String line = Serial.readStringUntil('\n');

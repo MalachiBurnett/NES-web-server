@@ -1,58 +1,69 @@
 # Running it, in order
 
-The order matters for one real reason: **the ESP32-C3 is not 5 V tolerant.**
-If the NES is powered while the gateway is not, 5 V comes down the dividers
-into unpowered pins and leaks through the chip's protection diodes. Power
-the ESP32 first and turn it off last, and that never happens.
+There is one rule that matters: **the ESP32-C3 is not 5 V tolerant.** If the
+gateway cable is in a powered NES while the ESP32 is not powered, 5 V comes
+down the dividers into unpowered pins and leaks through the chip's
+protection diodes. So: ESP32 on USB first, off last.
 
-Everything below assumes the gateway is in **controller port 1**.
+Everything else can happen in any order. With the ESP32 powered, the cable
+can go in or out at any time — at the flash cart menu, while idle, even
+halfway through a page — and both ends pick themselves back up.
+
+The gateway lives in **controller port 1**.
 
 ## Start up
 
-1. **Everything off.** NES off at the switch, ESP32 unplugged from USB.
+1. **ESP32 into the laptop's USB.** It boots holding D0 idle — the wire
+   high, which the console reads as no buttons.
 
-2. **Plug the controller cable into port 1** while it is all cold. Inserting
-   a connector live can momentarily drag the 5 V pin across a signal pin.
-
-3. **Controller into port 2**, if you have one, for the flash cart menu.
-
-4. **ESP32 into the laptop's USB.** It boots and holds D0 at idle — the wire
-   high, which the console reads as 0. Give it a second.
-
-5. **Check the port letter** if this is the first run of the day:
+2. **Check the port letter** if this is the first run of the day:
 
    ```
    python -c "import serial.tools.list_ports as p; [print(x.device,'-',x.description) for x in p.comports()]"
    ```
 
-6. **NES on.**
-
-7. **Pick the ROM from the flash cart menu.** `!NES-Web-Server.nes` for the
-   real thing, or one of the test ROMs if something is wrong.
-
-8. **Wait for cyan, pulsing.** That is the healthy resting state: the ROM is
-   polling, and it reads D0 as 0 because the gateway is holding it there.
-   Any other colour, check `docs/status-colours.md` before going further.
-
-9. **Start the bridge.**
+3. **Start the bridge.** It can run the whole time.
 
    ```
    python scripts/serial_bridge.py
    ```
 
-10. **Open `http://127.0.0.1:8080/`.**
+4. **NES on, controller in port 1, pick the ROM** from the flash cart menu:
+   `!NES-Web-Server.nes` for the real thing, or a test ROM if something is
+   wrong. The gateway can stay plugged in for this if you have a controller
+   in port 2 — an idle gateway reads as no buttons — or swap it in afterwards.
+
+5. **Gateway cable into port 1**, if it is not in already.
+
+6. **Wait for cyan, pulsing.** That is the healthy resting state: the ROM is
+   polling and reads a clean idle gateway. Red pulsing means the port is
+   reading junk — usually the plug not seated. Anything else, see
+   `docs/status-colours.md`.
+
+7. **Open `http://127.0.0.1:8080/`.**
 
 Watch the TV as the page loads: cyan → yellow while it streams → **green**.
 Green is success.
 
+## Plugging and unplugging while it runs
+
+- **Pull the cable mid-page** and push it back within a second: the gateway
+  retries on its own and the page still arrives. Leave it out and the
+  browser gets a 502 after about a second; the next request starts clean.
+- **With the cable out**, the screen pulses red (an empty port reads as
+  junk). Plug it in and it returns to its previous colour within a second.
+- **The bridge window** shows `# link: <reason>, retrying` for each retry
+  during a request. A handful after a plug-in is normal; a steady stream
+  with the cable seated is a wiring or timing problem.
+- **Between requests**, the gateway also prints `# NES port active` and
+  `# NES port quiet` as polling starts and stops. The bridge discards these;
+  `scripts/link_monitor.py` shows them.
+
 ## Shut down
 
-Reverse of the above, and the order matters as much here:
-
 1. Stop the bridge (Ctrl-C).
-2. **NES off.**
+2. **NES off**, or pull the gateway cable.
 3. **Then** unplug the ESP32 from USB.
-4. Unplug the controller cable last, cold.
 
 ## Flashing
 
@@ -73,7 +84,10 @@ Rebuilding the ROM after a change to `src/nes/main.asm` or the site:
 python scripts/build_rom.py
 ```
 
-Then copy `build/nes_web_server.nes` onto the SD card.
+Then copy `build/nes_web_server.nes` onto the SD card. **The ROM and the
+firmware must come from the same version** — the frame format changed when
+hot plugging was added, and an old ROM with new firmware (or the reverse)
+never gets past `response was for a different page` or a red screen.
 
 ## If it does not work
 
@@ -82,11 +96,12 @@ at a time — `docs/bring-up.md` explains both. Briefly:
 
 | Symptom | Where to look |
 |---|---|
-| Screen never leaves cyan | gateway never asserted a request: bridge, USB, or the CDC flag |
-| Yellow then amber, HTTP 502 | NES is serving, but the clock line is not reaching the gateway |
-| Yellow/brown loop on its own | the ROM is reading a port nothing is driving — wrong port, or gateway unpowered |
-| Random flicker, ignores commands | the data line is floating |
-| Menu launches a game untouched | same floating port: it reads as every button held |
+| Red pulsing with the cable in | the NES reads junk on D0: plug not seated, gateway unpowered, or D0 polarity |
+| Cyan, bridge says `port silent` | no polls reach the gateway: OUT0 wiring to GPIO 3, or the ROM not running |
+| Cyan, bridge says `N polls ... no good response` | polls arrive but frames do not: CLK wiring to GPIO 4 |
+| Yellow flashes, `cut short` / `checksum mismatch` retries | the NES is serving, but edges are being lost on CLK or OUT0 |
+| `response was for a different page` every time | ROM and firmware are different versions: reflash and recopy |
+| Menu launches a game untouched | the port is floating: it reads as every button held |
 | Menu goes haywire with the gateway plugged in | D0 polarity: the console inverts it, so an idle gateway must hold the wire **high** |
 
 ## Wiring, for reference

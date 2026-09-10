@@ -19,12 +19,12 @@ serves the site straight from a ROM file with no hardware involved.
 Everything goes through **controller port 1**. The ROM never reads `$4017`,
 so port 2 is unused and should be left empty. Three signals plus ground:
 
-> Moving the link to port 2 means changing the three reads of `$4016` to
-> `$4017` *and* physically moving the gateway. The strobe writes stay on
-> `$4016` either way, because OUT0 is one latch line shared by both ports.
-> Beware: an empty port floats and reads back as ones, so a ROM pointed at
-> a port with nothing driving it sees an endless stream of requests for
-> page `$FF`.
+> Moving the link to port 2 means changing the reads of `$4016` to `$4017`
+> *and* physically moving the gateway. The strobe writes stay on `$4016`
+> either way, because OUT0 is one latch line shared by both ports.
+> Beware: an empty port floats and reads back as ones. The ROM rejects that
+> as junk rather than answering it (the screen pulses red), but a ROM
+> pointed at the wrong port will never see a request.
 
 | NES port pin | Signal | Direction | ESP32-C3 |
 |---|---|---|---|
@@ -42,8 +42,8 @@ inverting buffer, which is simply how a real pad works: a pressed button
 pulls the wire low and the game reads a 1. So the gateway drives the wire
 *high* to send a 0, *low* to send a 1, and idles high. Get this backwards
 and an idle gateway looks like every button held down: a flash cart menu
-goes haywire the moment it is plugged in, and the ROM sees a request on
-every poll. The firmware keeps the inversion in one place, `d0Write()`;
+goes haywire the moment it is plugged in, and the ROM sees junk on every
+poll. The firmware keeps the inversion in one place, `d0Write()`;
 everything else is written in terms of the value the NES reads.
 
 Holding the wire high means driving a 5 V console input with 3.3 V. That is
@@ -53,7 +53,8 @@ margin, so if an idle gateway still reads as a 1, suspect that next.
 **The port is 5V and the ESP32-C3 is not 5V tolerant.** CLK and OUT0 are
 driven by the console at 5V and need shifting down; a 10k/20k divider on
 each is enough at these speeds. D0 is an input to the console and is happy
-being driven at 3.3V.
+being driven at 3.3V. Keep the ESP32 powered whenever its cable is in a
+powered console.
 
 Why these three signals: the NES can only *drive* one line to the port,
 OUT0, which is set by writing bit 0 of `$4016`. The clock line is not
@@ -67,7 +68,8 @@ and the read strobe clocks both directions.
 |---|---|
 | Clock pulse width | ~0.56µs (one 6502 cycle), **cannot be widened** |
 | Gap between clock pulses | ~37µs, set by `BIT_DELAY` in `main.asm` |
-| Latch strobe, high and then low | ~103µs each, set by `STROBE_DELAY` |
+| Poll hold: OUT0 high, no clocks | ~2ms, `HoldDelay` |
+| Strobe to first read | ~103µs, set by `STROBE_DELAY` |
 | Throughput | ~27 kbit/s, so ~0.7s for the 2.3KB index page |
 
 Because the pulse is so narrow, the gateway must capture clock edges with a
@@ -77,7 +79,8 @@ that short and will silently drop bits.
 `BIT_DELAY` is the knob to turn. It exists to give the gateway's interrupt
 handler room, so it has to cover the worst case latency on the ESP32 side —
 which gets worse once WiFi is running. Lower it once the link is proven; the
-protocol itself has no minimum speed.
+protocol itself has no minimum speed. Keep the gap between clocks well under
+the gateway's `LINK_QUIET_US` (1ms) though, or data will be taken for polls.
 
 Direction of travel for the data lines:
 
@@ -93,27 +96,31 @@ Both directions are **LSB first**.
 ## 3. Poll frame
 
 The NES is the master: it asks, the gateway answers. There is no way for the
-gateway to interrupt the console, so `ServerLoop` polls in a loop.
+gateway to interrupt the console, so `ServerLoop` polls in a loop, a few
+hundred times a second.
 
 ```
-NES                                   gateway
- |  OUT0 high, ~103us                    |
- |  OUT0 low   ------------------------> | falling edge: arm the frame
- |  read $4016  ---- clock pulse 1 ----> | bit 0: ready flag
- |  read $4016  ---- clock pulse 2 ----> | bit 1: page id, bit 0
- |     ... 7 more ...                    |
- |  read $4016  ---- clock pulse 9 ----> | bit 8: page id, bit 7
+NES                                         gateway
+ |  OUT0 high, no clocks for ~2ms              |
+ |  OUT0 low   ------------------------------> | edge after a quiet line: a poll
+ |  read $4016 ---- clock pulses 1-8 --------> | bits 0-7:   zeros
+ |  read $4016 ---- clock pulse 9 -----------> | bit 8:      ready flag
+ |  read $4016 ---- clock pulses 10-17 ------> | bits 9-16:  page id
+ |  read $4016 ---- clock pulses 18-25 ------> | bits 17-24: page id, inverted
 ```
 
-Nine bits: a ready flag, then the 8 bit page id. The gateway holds D0 low
-whenever it is idle, so an unanswered poll reads back as `0` and the NES
-backs off for ~0.8ms and asks again.
+The gateway holds D0 at 0 whenever it has nothing to ask, so an unanswered
+poll reads nine zeros and the NES stops after the ready flag.
 
-Arming on the falling edge of the strobe is what keeps the two sides
-synchronised. A request that turns up midway through a poll simply misses
-that frame and goes out on the next one — worst case one extra millisecond.
-While a response is streaming, OUT0 is carrying data, so the gateway ignores
-strobes unless it is idle.
+The NES only acts on a frame whose first eight bits really are zero and
+whose id and complement differ in every bit. Anything else is junk — a
+floating port reads as ones, and a gateway plugged in partway through a
+frame hands over half of one — so the NES ignores it, shows red, and polls
+again.
+
+The leading zeros also protect other software on the same port. A flash
+cart menu strobes and reads eight bits a frame; even with a request waiting,
+all it ever sees from the gateway is zeros, which is no buttons pressed.
 
 Page ids are indexes into `LookupTable`, in the order listed in
 `build_rom.py`: `0` = index.html, `1` = style.css. Anything `>= PageCount`
@@ -121,18 +128,64 @@ gets the 404 page, so the gateway can ask for an unknown id safely.
 
 ## 4. Response frame
 
-Immediately after the poll frame, with no further handshake:
+Immediately after an accepted poll frame, with no further handshake:
 
 ```
-[length low] [length high] [ ... length bytes ... ]
+[id] [length low] [length high] [ ... length bytes ... ] [sum1] [sum2]
 ```
 
-A 16 bit little endian byte count, then that many bytes of packet. The
-gateway sizes its buffer from the length and refuses anything larger than
-`MAX_PACKET` rather than overrunning it. If edges stop arriving mid transfer,
-`LINK_TIMEOUT_US` puts the link back to idle and the request fails cleanly.
+| Field | Notes |
+|---|---|
+| id | the page id the NES received, echoed back |
+| length | 16 bit little endian packet size; the gateway refuses 0 or anything over `MAX_PACKET` |
+| packet | the page, see below |
+| sum1, sum2 | over every byte from the id to the end of the packet: `sum1 += byte`, `sum2 += sum1`, both mod 256 |
 
-## 5. Packet format (`NHF2`)
+The echo tells the gateway the response answers *its* request. The checksum
+catches bits flipped or lost in transit — a lost bit shifts everything after
+it, which `sum2` notices even when `sum1` happens not to.
+
+## 5. Staying in step
+
+The cable can go in or come out at any moment, including halfway through a
+frame. Neither side assumes the other was there a moment ago.
+
+**Telling a poll from a data bit.** The NES drops OUT0 both to poll and to
+send a 0, so the edge alone says nothing. Timing does: data edges come tens
+of microseconds apart, each beside a clock pulse, while a poll follows ~2ms
+of OUT0 held high with no clocks at all. The gateway counts an OUT0 falling
+edge as a poll only if no clock arrived in the previous `LINK_QUIET_US`
+(1ms), well clear of both.
+
+**Every poll is a fresh start.** Whatever the gateway thought was going on,
+a poll means the NES has moved on, so it drops it and begins a new frame.
+
+**A request stays pending until a response checks out.** A frame the NES
+refused, a response that stops, one for the wrong page, one with a bad
+checksum: each puts the gateway back to idle with the request still pending,
+so it goes out again on the very next poll. `fetchPage` logs each as
+`# link: <reason>, retrying`.
+
+**A line that goes quiet mid-transfer is dropped.** Clocks stopping for more
+than `LINK_QUIET_US` partway through means the cable came out.
+
+**Giving up.** `fetchPage` fails after `NES_SILENT_US` (1s) with no polls or
+clocks at all, or `FETCH_DEADLINE_US` (5s) without a clean response. Both
+leave the line idle and print `# NES link timeout` with the reason; the next
+request starts from nothing.
+
+What each kind of hot plug looks like:
+
+| When | What happens |
+|---|---|
+| Plugged in, nothing pending | Contact bounce can look like a poll, but with nothing to ask the gateway only ever sends zeros. |
+| Plugged in with a request waiting | Bounce may arm a frame nobody reads; the next real poll resets it and carries the request. |
+| Plugged in partway through a poll | The gateway missed that strobe, so it stays idle and the NES reads zeros. The next poll carries the request. |
+| Plugged in while the NES streams a response | The first data edge follows a quiet line and passes for a poll. The gateway takes the rest for a response, which fails the echo or checksum. The NES's next real poll puts both back in step. |
+| Pulled mid-response | Clocks stop and the gateway drops the transfer after 1ms. Back in within a second, the retry just works; left out, the fetch fails after 1s. The NES finishes sending into nothing and goes back to polling. |
+| Pulled, seen from the NES | A floating D0 reads as ones, which fail the preamble: red screen, nothing sent. If it floats low instead, it reads as an idle gateway. |
+
+## 6. Packet format (`NHF2`)
 
 One packet per page, stored in the ROM behind its length prefix. All
 multi-byte integers are little endian. **All bit strings are packed MSB
@@ -164,7 +217,7 @@ needs both: it decodes `symbol count` symbols, and the result is `expanded
 length` bytes. Sizing the output buffer from the symbol count overflows it
 the moment a token expands.
 
-## 6. Testing without hardware
+## 7. Testing without hardware
 
 ```bash
 python scripts/build_rom.py
@@ -176,15 +229,20 @@ python tests/run_tests.py
 1. `build_rom.py`'s encoder against `emulate_rom.py`'s decoder, byte for byte.
 2. `tests/host/test_gateway.cpp` — compiles the real `.ino` for the PC behind
    a small Arduino shim and checks the decoder, its rejection of malformed
-   packets, and the link layer's edge cases.
+   packets, and the link layer against half frames, half responses, bad
+   echoes and checksums, contact bounce, and a flash cart menu.
 3. `tests/host/test_rom_link.cpp` — runs the **assembled ROM** on a small 6502
-   core whose `$4016` is wired to the real firmware's interrupt handlers, and
-   checks that every page arrives byte identical and decodes correctly.
+   core whose `$4016` is wired through a model of the cable to the real
+   firmware's interrupt handlers. It checks every page arrives byte identical,
+   then pulls and replugs the cable at chosen and then random moments in 40
+   fetches, all of which must come through intact.
 
 Test 3 exercises the actual shipped bytes on both sides, so a change to the
 timing constants, the frame layout or the packet format shows up immediately.
-What it does *not* model is real time: pulse widths, interrupt latency and
-5V/3.3V levels are the things that can still only be proven on hardware.
+Time is modelled only coarsely (instructions, not cycles), which is enough
+because the gateway's thresholds sit an order of magnitude from anything the
+ROM does. Pulse widths, interrupt latency and 5V/3.3V levels can still only
+be proven on hardware.
 
 To serve the site from a ROM file with no NES at all:
 

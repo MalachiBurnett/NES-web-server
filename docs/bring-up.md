@@ -95,9 +95,8 @@ every line and tees the session to `link-test.log`.
 
 ## A trap worth knowing
 
-**An empty controller port floats and reads back as ones.** A ROM pointed
-at a port with nothing driving it sees a continuous stream of requests for
-page `$FF`, which falls back to the 404 — the web server ROM shows this as
-near-constant yellow with brown flashes. A flash cart menu reading that
-port sees every button held down and launches immediately without being
-touched. Both symptoms have one cause, and it is not a broken wire.
+**An empty controller port floats and reads back as ones.** The web server
+ROM treats that as junk and pulses red rather than answering it, so red
+with the cable out is expected. A flash cart menu reading a floating port
+sees every button held down and launches immediately without being
+touched. Neither symptom means a broken wire.
