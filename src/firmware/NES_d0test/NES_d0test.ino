@@ -24,7 +24,7 @@
 //  Port 1 wiring:
 //    CLK      (pin 2) -> GPIO 4   via 10k/20k divider
 //    DATA_IN  (pin 3) -> GPIO 3   via 10k/20k divider   (OUT0)
-//    DATA_OUT (pin 4) <- GPIO 6   via 100R series       (D0)
+//    DATA_OUT (pin 4) <- GPIO 6   via 1k series         (D0)
 // ===================================================================
 
 #include "soc/gpio_reg.h"

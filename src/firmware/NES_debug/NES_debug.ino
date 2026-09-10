@@ -12,7 +12,7 @@
 //  Wiring is unchanged - controller port 1:
 //    CLK      (port pin 2) -> GPIO 4   via 10k/20k divider
 //    DATA_IN  (port pin 3) -> GPIO 3   via 10k/20k divider   (OUT0)
-//    DATA_OUT (port pin 4) <- GPIO 6   via 100R series       (D0)
+//    DATA_OUT (port pin 4) <- GPIO 6   via 1k series         (D0)
 //
 //  Prints a counter summary twice a second.  Counters are per window,
 //  not cumulative, so a burst shows up as one big number and then

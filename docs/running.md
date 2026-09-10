@@ -129,10 +129,13 @@ Controller port 1, seven pins:
 | 1 | GND | — | GND |
 | 2 | CLK | NES → gateway | GPIO 4, via 10k/20k divider |
 | 3 | OUT0 / latch | NES → gateway | GPIO 3, via 10k/20k divider |
-| 4 | D0 | gateway → NES | GPIO 6, via 100 Ω series, **inverted** |
+| 4 | D0 | gateway → NES | GPIO 6, via 1 kΩ series, **inverted** |
 | 7 | +5 V | — | not connected |
 
 The dividers are there because the C3 is a 3.3 V part and the port is 5 V.
-D0 needs no divider — it is an output into a high-impedance NES input, and
-the 100 Ω is just series protection. The console inverts it: wire low reads
+D0 needs no divider — it is an output into a high-impedance NES input. The
+1 kΩ in series limits the current into that input's protection diodes when
+the console is off and the gateway is not, which the start-up order above
+makes routine: through 100 Ω it would be ~27 mA, past a logic chip's 20 mA
+rating. At these speeds it costs nothing. The console inverts D0: wire low reads
 as 1, so the gateway idles with the wire high.

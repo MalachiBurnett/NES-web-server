@@ -31,7 +31,7 @@ so port 2 is unused and should be left empty. Three signals plus ground:
 | 1 | GND | — | GND |
 | 2 | CLK | NES → gateway | GPIO4, via level shifter |
 | 3 | OUT0 / latch | NES → gateway | GPIO3, via level shifter |
-| 4 | D0 | gateway → NES | GPIO6, 100 Ω series. **Inverted** — see below |
+| 4 | D0 | gateway → NES | GPIO6, 1 kΩ series. **Inverted** — see below |
 | 7 | +5V | — | leave disconnected, power the board over USB |
 
 Pin numbering varies between diagrams — find pin 1 and pin 7 with a

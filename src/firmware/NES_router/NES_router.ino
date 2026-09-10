@@ -17,7 +17,9 @@
 //
 //  The NES port is 5V.  The C3 is NOT 5V tolerant: CLK and DATA_IN
 //  need level shifting (a 10k/20k divider is enough for these
-//  speeds).  DATA_OUT drives the NES directly at 3.3V through 100R.
+//  speeds).  DATA_OUT drives the NES directly at 3.3V through 1k, which
+//  limits the current into the console's input when it is switched
+//  off and this is not.
 //
 //  D0 is INVERTED by the console, as for a real pad: wire low reads as
 //  1.  So an idle gateway holds the wire high.  See d0Write().
