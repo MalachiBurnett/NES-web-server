@@ -91,8 +91,24 @@ never gets past `response was for a different page` or a red screen.
 
 ## If it does not work
 
-Don't debug the full protocol. Drop to the test ROMs, which isolate one wire
-at a time — `docs/bring-up.md` explains both. Briefly:
+**Probe the wiring first.** With the web server ROM running and the bridge
+up, open `http://127.0.0.1:8080/_link`. The gateway watches both of its
+inputs for a second and reports edges and time spent high on each:
+
+| Reading | The wire is on |
+|---|---|
+| ~400 falling edges, high ~85% | OUT0 |
+| thousands of falling edges, high ~100% | CLK |
+| no edges, high 100% | +5V — or CLK, with its pulses not getting through |
+| no edges, low 100% | D3, D4, or nothing: not making contact |
+
+GPIO 3 should read as OUT0 and GPIO 4 as CLK. If they read as something
+else, the wire is on the wrong NES pin — fix it at the RJ45 breakout, with
+the NES off, and never move a cable wire onto the D0 position: that one has
+no divider, and +5V there would reach the ESP32 directly.
+
+Beyond wiring, don't debug the full protocol. Drop to the test ROMs, which
+isolate one wire at a time — `docs/bring-up.md` explains both. Briefly:
 
 | Symptom | Where to look |
 |---|---|

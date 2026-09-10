@@ -30,11 +30,13 @@
 #include <string.h>
 #include "soc/gpio_reg.h"
 
-// Forward declaration: the Arduino builder auto-generates function
-// prototypes at the top of the translation unit, before BitReader's
-// definition below - without this, the generated prototype for
-// parseTree(BitReader&, ...) fails to compile.
+// Forward declarations: the Arduino builder auto-generates function
+// prototypes at the top of the translation unit, before the
+// definitions below - without these, the generated prototypes for
+// parseTree(BitReader&, ...) and measureLink(..., LinkProbe*) fail to
+// compile.
 struct BitReader;
+struct LinkProbe;
 
 // Safe GPIOs on an ESP32-C3 SuperMini: 2/8/9 are strapping pins,
 // 18/19 are the native USB pair, 20/21 are UART0.  GPIO 3 has no
@@ -119,6 +121,11 @@ volatile uint32_t pollCount = 0;         // polls seen since boot
 volatile uint32_t lastClockUs = 0;       // last clock edge
 volatile uint32_t lastActivityUs = 0;    // last clock edge or poll
 
+// Raw edge counts, before any judgement about what they mean.  Only
+// the wiring probe uses these: they say whether each wire is alive.
+volatile uint32_t out0Edges = 0;
+volatile uint32_t clockEdges = 0;
+
 uint8_t packetBuf[MAX_PACKET];
 
 const char *linkErrorName(uint8_t e) {
@@ -163,6 +170,7 @@ void IRAM_ATTR linkGiveUp() {
 // has just started a fresh poll, so start a fresh frame.
 void IRAM_ATTR onStrobe() {
   uint32_t now = micros();
+  out0Edges++;
   if (now - lastClockUs < LINK_QUIET_US) return;   // a data bit, not a poll
 
   lastActivityUs = now;
@@ -184,6 +192,7 @@ void IRAM_ATTR onStrobe() {
 // the valid window.
 void IRAM_ATTR onClock() {
   uint32_t now = micros();
+  clockEdges++;
   uint32_t gap = now - lastActivityUs;
   lastClockUs = now;
   lastActivityUs = now;
@@ -452,7 +461,7 @@ bool fetchPage(uint8_t id) {
   if (silent || expired) {
     resetLink();
     if (silent)
-      Serial.printf("# NES link timeout: port silent for %lu ms - cable out, NES off, or ROM not running\n",
+      Serial.printf("# NES link timeout: port silent for %lu ms - cable out, NES off, or ROM not running (GET /_link probes the wiring)\n",
                     (unsigned long)(NES_SILENT_US / 1000));
     else
       Serial.printf("# NES link timeout: %lu polls, %lu link errors, no good response in %lu ms\n",
@@ -499,6 +508,65 @@ void watchLink() {
   }
 }
 
+// --- Wiring probe -----------------------------------------------------
+// GET /_link watches both inputs for a second and reports what arrived.
+// Each port line has its own signature while the web server ROM runs,
+// so a wire landing on the wrong NES pin shows up without a scope:
+//
+//   OUT0        ~400 falling edges a second, high ~85% of the time
+//   CLK         ~3600 falling edges a second, high ~100% - its pulses
+//               are far too short to add up to any time spent low
+//   +5V         no edges, high 100%
+//   D3, D4, or  no edges, low 100% (the divider pulls the pin down)
+//   no contact
+struct LinkProbe {
+  uint32_t out0Edges, clockEdges, polls, errors;
+  uint32_t out0HighPct, clockHighPct;
+};
+
+void measureLink(uint32_t windowUs, LinkProbe *p) {
+  uint32_t out0Start = out0Edges, clockStart = clockEdges;
+  uint32_t pollStart = pollCount, errorStart = linkErrors;
+  uint32_t samples = 0, out0High = 0, clockHigh = 0;
+  uint32_t start = micros();
+  do {
+    uint32_t in = REG_READ(GPIO_IN_REG);
+    samples++;
+    out0High += (in >> PIN_NES_DATA_IN) & 1;
+    clockHigh += (in >> PIN_NES_CLOCK) & 1;
+    delayMicroseconds(100);
+  } while (micros() - start < windowUs);
+
+  p->out0Edges = out0Edges - out0Start;
+  p->clockEdges = clockEdges - clockStart;
+  p->polls = pollCount - pollStart;
+  p->errors = linkErrors - errorStart;
+  p->out0HighPct = out0High * 100 / samples;
+  p->clockHighPct = clockHigh * 100 / samples;
+}
+
+int formatProbe(const LinkProbe *p, char *out, size_t n) {
+  int len = snprintf(out, n,
+    "NES link probe, 1 second\n"
+    "\n"
+    "  GPIO %d, OUT0: %6lu falling edges, high %3lu%% of the time\n"
+    "  GPIO %d, CLK:  %6lu falling edges, high %3lu%% of the time\n"
+    "  polls recognised %lu, link errors %lu\n"
+    "\n"
+    "With the web server ROM running, a healthy link reads about:\n"
+    "  OUT0     400 falling edges, high  85%%\n"
+    "  CLK     3600 falling edges, high 100%%\n"
+    "\n"
+    "Other signatures:\n"
+    "  no edges, high 100%%   wire is on +5V, or on CLK with its pulses lost\n"
+    "  no edges, low 100%%    wire is on D3, D4, or not making contact\n",
+    PIN_NES_DATA_IN, (unsigned long)p->out0Edges, (unsigned long)p->out0HighPct,
+    PIN_NES_CLOCK, (unsigned long)p->clockEdges, (unsigned long)p->clockHighPct,
+    (unsigned long)p->polls, (unsigned long)p->errors);
+  if (len < 0) return 0;
+  return len < (int)n ? len : (int)n - 1;
+}
+
 // --- HTTP over the serial link to the host --------------------------
 struct Route { const char *path; uint8_t id; const char *mime; };
 
@@ -509,6 +577,16 @@ const Route routes[] = {
 };
 
 void serve(const String &path) {
+  if (path == "/_link") {
+    LinkProbe p;
+    char report[1024];
+    measureLink(1000000, &p);
+    int len = formatProbe(&p, report, sizeof report);
+    Serial.printf("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: %d\r\n\r\n", len);
+    Serial.write((const uint8_t *)report, len);
+    return;
+  }
+
   uint8_t id = PAGE_404_ID;
   const char *mime = "text/html";
   for (const Route &r : routes) {

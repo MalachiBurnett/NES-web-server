@@ -427,6 +427,24 @@ int main(int argc, char **argv) {
   uint32_t t0 = g_micros;
   check(fetchPage(0) && g_micros == t0, "a cached page is served without touching the link");
 
+  // The numbers GET /_link tells people to expect have to be what the
+  // ROM really produces, or the probe sends them hunting the wrong wire.
+  printf("\nwiring probe (GET /_link)\n");
+  LinkProbe probe;
+  measureLink(1000000, &probe);
+  char report[1024];
+  int reportLen = formatProbe(&probe, report, sizeof report);
+  printf("    OUT0 %lu edges, high %lu%%   CLK %lu edges, high %lu%%   %lu polls\n",
+         (unsigned long)probe.out0Edges, (unsigned long)probe.out0HighPct,
+         (unsigned long)probe.clockEdges, (unsigned long)probe.clockHighPct,
+         (unsigned long)probe.polls);
+  check(probe.out0Edges > 250 && probe.out0Edges < 700 && probe.polls == probe.out0Edges,
+        "OUT0: a few hundred polls a second, every one recognised");
+  check(probe.out0HighPct >= 70 && probe.out0HighPct <= 95, "    high most, but not all, of the time");
+  check(probe.clockEdges >= 8 * probe.polls && probe.clockHighPct >= 99,
+        "CLK: ~9 edges per poll, and high the rest of the time");
+  check(reportLen > 0 && reportLen < (int)sizeof report - 1, "the report fits its buffer");
+
   printf("\nhot plug\n");
   unplug(true);
   uint64_t sends = sendsShown;
