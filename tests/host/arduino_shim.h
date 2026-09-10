@@ -13,6 +13,17 @@
 uint32_t g_gpio_in = 0;
 uint32_t g_gpio_out = 0;
 
+// Pins as the shared test models see them (link_tests.h, nes_sim.h).
+// avr_shim.h has the Arduino Mega's versions.
+static inline bool simInputLevel(int pin) { return (g_gpio_in >> pin) & 1; }
+static inline void simSetInput(int pin, bool level) {
+  if (level) g_gpio_in |= (1u << pin);
+  else       g_gpio_in &= ~(1u << pin);
+}
+static inline bool simGatewayOutput(int pin) { return (g_gpio_out >> pin) & 1; }
+// With the cable out, the dividers pull the gateway's inputs to ground.
+static const bool SIM_INPUT_UNPLUGGED = false;
+
 #define IRAM_ATTR
 #define INPUT 0
 #define OUTPUT 1
