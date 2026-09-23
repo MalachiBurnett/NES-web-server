@@ -1,17 +1,24 @@
 ; ===================================================================
-;  NES WEB SERVER  --  link layer bring-up test ROM
+;  NES WEB SERVER  --  link layer bring-up test ROMs
 ;
 ;  This is NOT the web server.  It exercises the three controller
 ;  port lines one at a time so each can be proved or ruled out on
-;  its own.  Pair it with src/firmware/NES_debug.ino on the ESP32.
+;  its own.  Pair it with src/firmware/NES_debug (docs/bring-up.md).
+;  Two ROMs come out of this file (scripts/build_test_roms.py):
 ;
-;  Controller port 1 ($4016).  Runs forever, cycling five phases:
+;  The link test.  Controller port 1 ($4016).  Runs forever, cycling
+;  five phases:
 ;
 ;    1  D0 SENSE    green/red mirror of what the NES reads on D0
 ;    2  OUT0 DRIVE  NES toggles OUT0; blue mirror of what it drives
 ;    3  CLK FAST    exactly 1000 clock pulses ~40us apart, yellow
 ;    4  CLK SLOW    exactly 1000 clock pulses ~110us apart, orange
 ;    5  IDLE        port untouched, black.  the quiet baseline
+;
+;  The D0 test, assembled with -dD0_ONLY.  Phase 1 and nothing else,
+;  forever: red for 0, green for 1.  It never strobes OUT0, so the NES
+;  drives nothing into the port, and a short between pins 3 and 4
+;  cannot pit the console's output against the gateway's.
 ;
 ;  There is deliberately no handshake with the gateway: each side
 ;  runs free, so nothing can go out of sync.  Read the TV for which
@@ -60,17 +67,23 @@ v2:
     BIT $2002
     BPL v2
 
+IFDEF D0_ONLY
+    LDA #COL_D0_LOW
+ELSE
     LDA #COL_IDLE
+ENDIF
     JSR SetBG
     LDA #$1E
     STA $2001
 
 MainLoop:
     JSR PhaseD0
+IFNDEF D0_ONLY
     JSR PhaseOut0
     JSR PhaseClkFast
     JSR PhaseClkSlow
     JSR PhaseIdle
+ENDIF
     JMP MainLoop
 
 ; --- Phase 1: can the NES see D0 at all? ---------------------------

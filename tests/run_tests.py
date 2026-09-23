@@ -1,15 +1,17 @@
 """Run every check that does not need real hardware.
 
   1. build_rom.py's encoder against emulate_rom.py's decoder, byte for byte
-  2. both gateways' firmware, compiled for the PC - the ESP32 original
-     and the Arduino Mega port - through the same link layer tests
-  3. the assembled ROM executed on a 6502 core, driving each firmware
+  2. the gateway firmware compiled for the PC in every build - each board,
+     each wiring - through the same link layer tests
+  3. the assembled ROM executed on a 6502 core, driving each build
   4. serial_bridge.py decompressing what the Mega gateway really sends
-  5. the Mega firmware compiled for real, run cycle for cycle on an
-     ATmega2560 simulator against the ROM on a cycle-counted 6502
+  5. both sketches compiled for real for every build whose core is
+     installed, and the Mega's run cycle for cycle on an ATmega2560
+     simulator against the ROM on a cycle-counted 6502
 
 Needs python and g++ on PATH, pyserial for 4, and arduino-cli with the
-arduino:avr core for 5. Build the ROM first:
+arduino:avr core (and esp32:esp32, if you have it) for 5. Build the ROM
+first:
 
   python scripts/build_rom.py
   python tests/run_tests.py
@@ -26,7 +28,19 @@ HOST = os.path.join(ROOT, "tests", "host")
 BUILD = os.path.join(ROOT, "build")
 ROM = os.path.join(BUILD, "nes_web_server.nes")
 MEGA_HTTP = os.path.join(BUILD, "mega_http")
-MEGA_FIRMWARE = os.path.join(BUILD, "mega_fw")
+FIRMWARE = os.path.join(BUILD, "fw")
+
+# Every build of the firmware: the flags that make it, on the PC (as the
+# real toolchain would define them) and for arduino-cli.
+VARIANTS = {
+    "esp32":     {"host": ["-DARDUINO_ARCH_ESP32"],
+                  "fqbn": "esp32:esp32:esp32c3:CDCOnBoot=cdc", "core": "esp32:esp32", "flags": []},
+    "mega":      {"host": ["-D__AVR_ATmega2560__"],
+                  "fqbn": "arduino:avr:mega:cpu=atmega2560", "core": "arduino:avr", "flags": []},
+    "mega_rj45": {"host": ["-D__AVR_ATmega2560__", "-DNES_WIRING_RJ45"],
+                  "fqbn": "arduino:avr:mega:cpu=atmega2560", "core": "arduino:avr", "flags": ["-DNES_WIRING_RJ45"]},
+}
+SKETCHES = ["NES_router", "NES_debug"]
 
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import build_rom
@@ -71,14 +85,17 @@ def test_roundtrip():
     return ok
 
 
-def run_cpp(name, *args):
-    """Compile one host test against the real .ino and run it."""
-    exe = os.path.join(BUILD, name + (".exe" if os.name == "nt" else ""))
+def run_cpp(name, *args, variant=None):
+    """Compile one host test against the real .ino, in one build of it,
+    and run it."""
+    label = f"{name}_{variant}" if variant else name
+    exe = os.path.join(BUILD, label + (".exe" if os.name == "nt" else ""))
     compile_cmd = [
         "g++", "-std=c++17", "-O2", "-Wall", "-Wextra", "-Wno-unused-parameter",
+        *(VARIANTS[variant]["host"] if variant else []),
         "-I", HOST, "-o", exe, os.path.join(HOST, name + ".cpp"),
     ]
-    print(f"\ncompiling {name}")
+    print(f"\ncompiling {name}" + (f" for {variant}" if variant else ""))
     sys.stdout.flush()
     compiled = subprocess.run(compile_cmd, capture_output=True, text=True)
     if compiled.returncode != 0:
@@ -98,6 +115,10 @@ class FakeSerial:
     def reset_input_buffer(self):
         pass
 
+    @property
+    def in_waiting(self):
+        return len(self._data.getbuffer()) - self._data.tell()
+
     def write(self, data):
         return len(data)
 
@@ -114,7 +135,7 @@ class FakeSerial:
 def test_bridge():
     """serial_bridge.py against the Arduino Mega gateway's real output.
 
-    test_mega_link saves every response the firmware wrote, byte for byte.
+    test_link saves every response the firmware wrote, byte for byte.
     Each goes through the bridge's own fetch() here, which must turn the
     raw packet back into exactly the page that went into the ROM."""
     print("\nserial_bridge.py against the Mega gateway's output")
@@ -170,7 +191,8 @@ def test_bridge():
     serial_bridge.ser = FakeSerial(b"# Arduino Mega gateway online. Send a path\r\nHTTP/1.1")
     with contextlib.redirect_stdout(io.StringIO()):
         announced = serial_bridge.wait_for_gateway(timeout=1.0)
-    ok &= result(announced and serial_bridge.ser.read(9) == b"HTTP/1.1",
+    unread = bytes(serial_bridge._pending) + serial_bridge.ser.read(9)
+    ok &= result(announced and unread.startswith(b"HTTP/1.1"),
                  "start-up waits for 'online', and no further")
     return ok
 
@@ -183,29 +205,36 @@ def find_arduino_cli():
     return installed if os.path.exists(installed) else None
 
 
-def build_mega_firmware():
-    """Compile NES_router_mega exactly as it would be flashed, for the
-    cycle-accurate simulation. Returns the .elf, None when arduino-cli or
-    the AVR core is not installed, or False when the build fails."""
+def build_firmware():
+    """Compile every sketch in every build whose core is installed,
+    exactly as it would be flashed. Returns {(sketch, variant): elf}, or
+    False when a build fails. The Mega's .elf files feed the cycle-accurate
+    simulation."""
     cli = find_arduino_cli()
     if not cli:
-        print("\narduino-cli not found - skipping the cycle-accurate Mega simulation")
-        return None
+        print("\narduino-cli not found - skipping the firmware builds and the cycle-accurate Mega simulation")
+        return {}
     cores = subprocess.run([cli, "core", "list"], capture_output=True, text=True).stdout
-    if "arduino:avr" not in cores:
-        print("\nno arduino:avr core - skipping the cycle-accurate Mega simulation"
-              " (arduino-cli core install arduino:avr)")
-        return None
-    print("\ncompiling NES_router_mega for the ATmega2560")
-    sys.stdout.flush()
-    built = subprocess.run(
-        [cli, "compile", "--fqbn", "arduino:avr:mega:cpu=atmega2560", "--build-path", MEGA_FIRMWARE,
-         os.path.join(ROOT, "src", "firmware", "NES_router_mega")],
-        capture_output=True, text=True)
-    if built.returncode != 0:
-        print(built.stdout + built.stderr)
-        return False
-    return os.path.join(MEGA_FIRMWARE, "NES_router_mega.ino.elf")
+    elfs = {}
+    for variant, v in VARIANTS.items():
+        if v["core"] not in cores:
+            print(f"\nno {v['core']} core - skipping the {variant} builds (arduino-cli core install {v['core']})")
+            continue
+        for sketch in SKETCHES:
+            out = os.path.join(FIRMWARE, f"{sketch}_{variant}")
+            print(f"\ncompiling {sketch} for {variant}")
+            sys.stdout.flush()
+            cmd = [cli, "compile", "--fqbn", v["fqbn"], "--build-path", out,
+                   os.path.join(ROOT, "src", "firmware", sketch)]
+            if v["flags"]:
+                cmd += ["--build-property", "compiler.cpp.extra_flags=" + " ".join(v["flags"])]
+            built = subprocess.run(cmd, capture_output=True, text=True)
+            if built.returncode != 0:
+                print(built.stdout + built.stderr)
+                return False
+            print("  " + next((l for l in built.stdout.splitlines() if l.startswith("Sketch uses")), "built"))
+            elfs[(sketch, variant)] = os.path.join(out, sketch + ".ino.elf")
+    return elfs
 
 
 def main():
@@ -217,23 +246,26 @@ def main():
         return 0 if test_roundtrip() else 1
 
     ok = test_roundtrip()
-    ok &= run_cpp("test_gateway")
-    ok &= run_cpp("test_rom_link")
-    ok &= run_cpp("test_mega_gateway")
-
     os.makedirs(MEGA_HTTP, exist_ok=True)
-    mega_link = run_cpp("test_mega_link", MEGA_HTTP)
-    ok &= mega_link
-    if mega_link:
-        ok &= test_bridge()
-    else:
-        print("\nskipping the serial_bridge.py test: test_mega_link failed")
+    for variant in VARIANTS:
+        ok &= run_cpp("test_gateway", variant=variant)
+        # The Mega's responses are raw packets: keep them for the bridge.
+        linked = run_cpp("test_link", *([MEGA_HTTP] if variant == "mega" else []), variant=variant)
+        ok &= linked
+        if variant == "mega":
+            if linked:
+                ok &= test_bridge()
+            else:
+                print("\nskipping the serial_bridge.py test: test_link failed for the Mega")
 
-    elf = build_mega_firmware()
-    if elf is False:
+    elfs = build_firmware()
+    if elfs is False:
         ok = False
-    elif elf:
-        ok &= run_cpp("test_mega_avr", elf)
+    else:
+        for variant, wiring in (("mega", "header"), ("mega_rj45", "rj45")):
+            if ("NES_router", variant) in elfs:
+                ok &= run_cpp("test_mega_avr", elfs[("NES_router", variant)], wiring)
+                ok &= run_cpp("test_mega_avr", elfs[("NES_debug", variant)], wiring, "tester")
 
     print("\n" + ("=" * 40))
     print("ALL TESTS PASSED" if ok else "TESTS FAILED")

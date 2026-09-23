@@ -3,14 +3,16 @@
 // model (avr_core.h), against the real assembled ROM on a 6502 whose every
 // $4016 access lands at its true time (cpu6502.h).
 //
-// test_mega_link.cpp proves the gateway's logic with a clock that only
+// test_link.cpp proves the gateway's logic with a clock that only
 // counts instructions.  This proves its timing: that the compiled
 // interrupt handlers, behind the Arduino core's dispatch and alongside its
 // timer and serial interrupts, keep up with a 6502 reading the port every
 // ~33 microseconds - and by how much.  It cannot see anything electrical:
 // edges are ideal, and the NES holds CLK low for half a CPU cycle.
 //
-//   test_mega_avr <nes_web_server.nes> <NES_router_mega.ino.elf>
+//   test_mega_avr <nes_web_server.nes> <NES_router.ino.elf> [header|rj45]
+//
+// The last argument is the wiring the firmware was built for (docs/mega.md).
 #include <deque>
 #include <functional>
 #include <map>
@@ -34,8 +36,19 @@ static const uint64_t NEVER = UINT64_MAX;
 static const uint8_t COL_IDLE = 0x0C, COL_JUNK = 0x06, COL_SEND = 0x28;
 static const uint16_t ZP_COLOUR = 0x08;
 
-// Mega pins 2, 3 and 4 are PE4, PE5 and PG5.
-static const int BIT_CLK = 4, BIT_OUT0 = 5, BIT_D0 = 5;
+// Where each port line lands on the chip, and which handler serves CLK.
+struct Wiring {
+  const char *name;
+  int clkPort, clkBit, out0Port, out0Bit, d0Port, d0Bit;
+  int clockVector;
+  uint16_t out0PinReg;              // what the clock handler reads OUT0 from
+  const char *clockHandler;         // symbol that must be in the .elf
+};
+static const Wiring HEADER = {"header: CLK pin 2 (PE4), OUT0 pin 3 (PE5), D0 pin 4 (PG5)",
+                              PORT_E, 4, PORT_E, 5, PORT_G, 5, VEC_INT4, PINE, "__vector_5"};
+static const Wiring RJ45 = {"RJ45: CLK pin 12 (PB6), OUT0 pin 9 (PH6), D0 pin 13 (PB7)",
+                            PORT_B, 6, PORT_H, 6, PORT_B, 7, VEC_PCINT0, PINH, "__vector_9"};
+static Wiring wiring = HEADER;
 
 static Mega2560 mcu;
 static std::map<std::string, uint32_t> symbols;
@@ -139,15 +152,15 @@ static void runMcuUntil(uint64_t t) {
 // NES reads a floating D0, which comes back as ones.
 static void unplug() {
   plugged = false;
-  mcu.driveInput(PORT_E, BIT_CLK, -1);
-  mcu.driveInput(PORT_E, BIT_OUT0, -1);
+  mcu.driveInput(wiring.clkPort, wiring.clkBit, -1);
+  mcu.driveInput(wiring.out0Port, wiring.out0Bit, -1);
 }
 
 static void plugIn() {
   plugged = true;
   timing.unserved.clear();
-  mcu.driveInput(PORT_E, BIT_CLK, 1);
-  mcu.driveInput(PORT_E, BIT_OUT0, out0);
+  mcu.driveInput(wiring.clkPort, wiring.clkBit, 1);
+  mcu.driveInput(wiring.out0Port, wiring.out0Bit, out0);
 }
 
 // One 6502 instruction.  One that touches the port is a 4 cycle absolute
@@ -178,15 +191,15 @@ static void stepNes() {
       timing.clkFalls++;
       timing.unserved.push_back(fall);
       if (timing.unserved.size() > 1024) timing.unserved.pop_front();
-      mcu.driveInput(PORT_E, BIT_CLK, 0);
+      mcu.driveInput(wiring.clkPort, wiring.clkBit, 0);
       runMcuUntil(fall + cycle / 2);
-      mcu.driveInput(PORT_E, BIT_CLK, 1);
+      mcu.driveInput(wiring.clkPort, wiring.clkBit, 1);
     }
 
     uint64_t sample = nesPs + 4 * cycle;
     runMcuUntil(sample);
     if (plugged) {
-      d0ForRead = !mcu.pinLevel(PORT_G, BIT_D0);   // the console inverts D0
+      d0ForRead = !mcu.pinLevel(wiring.d0Port, wiring.d0Bit);   // the console inverts D0
       if (timing.lastD0Change > timing.lastRead)
         timing.minD0Setup = std::min(timing.minD0Setup, sample - timing.lastD0Change);
       timing.lastRead = sample;
@@ -205,7 +218,7 @@ static void stepNes() {
     }
     if (out0Latched != out0) {
       out0 = out0Latched;
-      if (plugged) mcu.driveInput(PORT_E, BIT_OUT0, out0);
+      if (plugged) mcu.driveInput(wiring.out0Port, wiring.out0Bit, out0);
     }
   }
   placingPortAccess = false;
@@ -229,7 +242,7 @@ static void installHooks() {
   mcu.onSerialByte = [](uint8_t b) { serialOut += (char)b; };
 
   mcu.onInterrupt = [](int vector) {
-    if (vector != VEC_INT4 || !plugged || timing.unserved.empty()) return;
+    if (vector != wiring.clockVector || !plugged || timing.unserved.empty()) return;
     timing.handlerClkFall = timing.unserved.front();
     timing.unserved.pop_front();
     timing.maxClkToHandler = std::max(timing.maxClkToHandler, now() - timing.handlerClkFall);
@@ -238,11 +251,11 @@ static void installHooks() {
   // D0 changes made by the clock handler must land before the NES's next
   // read, which comes after the next clock edge.
   mcu.onPortWrite = [](uint16_t) {
-    bool wire = mcu.pinLevel(PORT_G, BIT_D0);
+    bool wire = mcu.pinLevel(wiring.d0Port, wiring.d0Bit);
     if (wire == timing.d0Wire) return;
     timing.d0Wire = wire;
     timing.lastD0Change = now();
-    if (mcu.handler != VEC_INT4 || !plugged || !timing.handlerClkFall) return;
+    if (mcu.handler != wiring.clockVector || !plugged || !timing.handlerClkFall) return;
     timing.d0Changes++;
     if (timing.lastClkFall != timing.handlerClkFall) timing.lateD0++;
     timing.maxClkToD0 = std::max(timing.maxClkToD0, now() - timing.handlerClkFall);
@@ -251,7 +264,7 @@ static void installHooks() {
   // OUT0 reads made by the clock handler must land before the NES writes
   // the next bit.
   mcu.onPinRead = [](uint16_t addr) {
-    if (addr != PINE || mcu.handler != VEC_INT4 || !plugged || !timing.handlerClkFall) return;
+    if (addr != wiring.out0PinReg || mcu.handler != wiring.clockVector || !plugged || !timing.handlerClkFall) return;
     timing.out0Samples++;
     timing.lastOut0Sample = now();
     if (timing.lastWrite > timing.handlerClkFall) timing.lateOut0++;
@@ -373,7 +386,7 @@ static const char *usText(uint64_t ps) {
 
 // Clock edges the firmware never ran a handler for.
 static long long lostClocks() {
-  return (long long)timing.clkFalls - (long long)mcu.handlers[VEC_INT4].count;
+  return (long long)timing.clkFalls - (long long)mcu.handlers[wiring.clockVector].count;
 }
 
 static void reportTiming() {
@@ -388,7 +401,7 @@ static void reportTiming() {
          (unsigned long long)timing.lateOut0);
 
   struct { int vector; const char *name; } names[] = {
-    {VEC_INT4, "INT4, CLK"}, {VEC_INT5, "INT5, OUT0"}, {VEC_TIMER0_OVF, "timer 0"},
+    {VEC_INT4, "INT4, CLK"}, {VEC_INT5, "INT5, OUT0"}, {VEC_PCINT0, "PCINT0, CLK"}, {VEC_TIMER0_OVF, "timer 0"},
     {VEC_USART0_RX, "serial receive"}, {VEC_USART0_UDRE, "serial send"},
   };
   for (auto &n : names) {
@@ -404,7 +417,7 @@ static void reportTiming() {
 }
 
 static void checkTiming() {
-  check(timing.clkFalls > 0 && lostClocks() == 0, "every clock edge gets a handler run of its own");
+  check(timing.clkFalls > 0 && lostClocks() == 0, "every clock edge gets exactly one handler run");
   check(timing.d0Changes > 0 && timing.lateD0 == 0 && timing.minD0Setup >= 5 * US,
         "D0 is settled at least 5us before every NES read");
   check(timing.out0Samples > 0 && timing.lateOut0 == 0 &&
@@ -419,19 +432,93 @@ static void checkTiming() {
     printf("      %d resets, %llu serial overruns\n", mcu.resets, (unsigned long long)mcu.serialOverruns);
 }
 
+// The bring-up tester (NES_debug.ino), against the web server ROM: what
+// it reports has to be what the ROM really does, and its D0 has to reach
+// the NES.
+static int testTester() {
+  std::vector<std::string> lines;
+  std::vector<uint64_t> clocksAtLine;
+  std::string partial;
+  mcu.onSerialByte = [&](uint8_t b) {
+    serialOut += (char)b;
+    if (b != '\n') { partial += (char)b; return; }
+    lines.push_back(partial);
+    clocksAtLine.push_back(timing.clkFalls);
+    partial.clear();
+  };
+
+  boot(PAL_CYCLE, -1);
+  check(bootOnline(), "the tester boots and announces itself online");
+  run(3 * SEC);
+  check(nes.ram[ZP_COLOUR] == COL_IDLE, "its idle D0 reads as an idle gateway (cyan)");
+
+  unsigned long clk = 0, out0 = 0, clkHigh = 0, out0High = 0, windows = 0, counted = 0;
+  bool steady = true;
+  uint64_t clocksBefore = 0;
+  for (size_t i = 0; i < lines.size(); i++) {
+    if (sscanf(lines[i].c_str(), "clk=%lu out0=%lu | clkHigh=%lu%% out0High=%lu%%", &clk, &out0, &clkHigh, &out0High) != 4)
+      continue;
+    if (windows++ == 0) { clocksBefore = clocksAtLine[i]; continue; }   // a partial window
+    counted += clk;
+    if (clk < 1600 || clk > 2000 || out0 < 150 || out0 > 250 || clkHigh < 99 || out0High < 75 || out0High > 95) {
+      printf("      %s\n", lines[i].c_str());
+      steady = false;
+    }
+  }
+  printf("      %lu reports, last: clk=%lu out0=%lu clkHigh=%lu%% out0High=%lu%%\n", windows, clk, out0, clkHigh, out0High);
+  check(windows >= 5 && steady, "every report reads ~1800 clocks, ~200 OUT0 edges, high 100% and ~85%");
+  long long missed = (long long)(clocksAtLine.back() - clocksBefore) - (long long)counted;
+  printf("      %lu clocks reported, %lld still to be (they fall in the next window)\n", counted, missed);
+  check(missed >= 0 && missed < 100, "every clock edge counted once");
+
+  serialOut.clear();
+  mcu.serialSend("d0 1\n");
+  run(SEC / 2);
+  check(nes.ram[ZP_COLOUR] == COL_JUNK, "d0 1: the ROM reads ones, which it takes for junk (red)");
+  mcu.serialSend("d0 0\n");
+  run(SEC / 2);
+  check(nes.ram[ZP_COLOUR] == COL_IDLE, "d0 0: back to an idle gateway (cyan)");
+
+  lines.clear();
+  mcu.serialSend("pins\n");
+  run(2 * SEC);
+  bool clkFound = false, out0Found = false, stray = false;
+  for (const std::string &l : lines) {
+    unsigned pin = 0, now = 0;
+    unsigned long high = 0, falls = 0;
+    if (sscanf(l.c_str(), "# %u %u %lu%% %lu", &pin, &now, &high, &falls) != 4) continue;
+    bool isClk = l.find("CLK should") != std::string::npos, isOut0 = l.find("OUT0 should") != std::string::npos;
+    if (isClk || isOut0 || falls) printf("      %s\n", l.c_str());
+    if (isClk) clkFound = high >= 99 && falls > 0;
+    else if (isOut0) out0Found = high >= 75 && high <= 95 && falls >= 300 && falls <= 500;
+    else if (falls || high < 100) stray = true;
+  }
+  check(clkFound && out0Found && !stray, "pins: CLK and OUT0 found where the wiring puts them, nothing elsewhere");
+  check(!mcu.fault && !nes.halted && mcu.resets == 0, "no faults or resets");
+  return finish();
+}
+
 int main(int argc, char **argv) {
   if (argc < 3) {
-    printf("usage: test_mega_avr <nes_web_server.nes> <NES_router_mega.ino.elf>\n");
+    printf("usage: test_mega_avr <nes_web_server.nes> <NES_router.ino.elf> [header|rj45] [tester]\n");
     return 2;
   }
+  if (argc > 3 && strcmp(argv[3], "rj45") == 0) wiring = RJ45;
+  bool tester = argc > 4 && strcmp(argv[4], "tester") == 0;
+  printf("%s, wiring %s\n\n", tester ? "bring-up tester" : "gateway", wiring.name);
   romImage = readFile(argv[1]);
   if (romImage.size() < 16 + 0x8000) { printf("ROM too small\n"); return 2; }
   prg.assign(romImage.begin() + 16, romImage.begin() + 16 + 0x8000);
   offsets = findPackets(romImage);
   if (offsets.size() < 3 || findBitDelay(prg) < 0) { printf("not the web server ROM\n"); return 2; }
   if (!loadElf(mcu, readFile(argv[2]), &symbols)) { printf("cannot load %s\n", argv[2]); return 2; }
-  for (const char *name : {"pollCount", "linkErrors", "__bss_end"}) {
-    if (!symbolAddress(name)) { printf("the firmware has no symbol %s\n", name); return 2; }
+  if (tester) {
+    if (!symbols.count(wiring.clockHandler)) { printf("the tester has no %s - built for another wiring?\n", wiring.clockHandler); return 2; }
+    installHooks();
+    return testTester();
+  }
+  for (const char *name : {"pollCount", "linkErrors", "__bss_end", wiring.clockHandler}) {
+    if (!symbols.count(name)) { printf("the firmware has no symbol %s - built for another wiring?\n", name); return 2; }
   }
   installHooks();
 
@@ -461,7 +548,10 @@ int main(int argc, char **argv) {
                 sscanf(p, "polls recognised %lu", &polls) == 1;
   printf("      /_link: OUT0 %lu edges, high %lu%%   CLK %lu edges, high %lu%%   %lu polls\n",
          out0Edges, out0High, clkEdges, clkHigh, polls);
-  check(parsed && out0Edges > 250 && out0Edges < 700 && polls == out0Edges && clkEdges >= 8 * polls &&
+  // With no interrupt on OUT0 its edges are sampled, and a poll can fall
+  // either side of the window from its edge.
+  check(parsed && out0Edges > 250 && out0Edges < 700 && polls + 1 >= out0Edges && out0Edges + 1 >= polls &&
+        clkEdges >= 8 * polls &&
         out0High >= 70 && out0High <= 95 && clkHigh >= 99,
         "GET /_link reports what the ROM really does");
 

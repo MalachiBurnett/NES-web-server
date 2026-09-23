@@ -14,8 +14,9 @@ The whole link is built out of those two facts.
 | | |
 |---|---|
 | `src/nes/main.asm` | the cartridge: polls for requests, streams pages back |
-| `src/firmware/NES_router/` | the gateway: asks for pages, decompresses, serves |
-| `src/firmware/NES_router_mega/` | the same gateway for an Arduino Mega 2560, which leaves decompression to the bridge |
+| `src/nes/debug.asm` | the bring-up test ROMs, which test the link one wire at a time |
+| `src/firmware/NES_router/` | the gateway: asks for pages and serves them. One sketch for the ESP32-C3 and the Arduino Mega 2560 |
+| `src/firmware/NES_debug/` | the bring-up tester that pairs with the test ROMs, for either board |
 | `scripts/build_rom.py` | compresses the site and assembles the ROM |
 | `scripts/serial_bridge.py` | HTTP on the host, serial to the gateway |
 | `scripts/emulate_rom.py` | serves the site from a ROM file, no hardware |
@@ -44,17 +45,18 @@ python scripts/emulate_rom.py
 python tests/run_tests.py
 ```
 
-These are not mocks. `test_rom_link.cpp` runs the **assembled ROM** on a
+These are not mocks. `test_link.cpp` runs the **assembled ROM** on a
 small 6502 core whose `$4016` is wired to the real firmware's interrupt
 handlers, so the two halves of the protocol are checked against each other
-exactly as they will run on hardware. `test_mega_link.cpp` does the same
-for the Mega port, and its HTTP output is then fed through the real
-`serial_bridge.py`. Both gateways share one set of link layer tests.
+exactly as they will run on hardware. The gateway is compiled once for each
+board and wiring, and every build goes through the same tests. The Mega's
+HTTP output is also fed through the real `serial_bridge.py`.
 
-With `arduino-cli` installed, `test_mega_avr.cpp` goes further for the Mega:
-it compiles the firmware exactly as it would be flashed and runs it on a
-cycle-accurate ATmega2560 simulator against the ROM, which measures whether
-its interrupt handlers keep up with the NES and by how much.
+With `arduino-cli` installed, the tests also compile both sketches for every
+board whose core is installed. `test_mega_avr.cpp` then goes further for
+the Mega: it runs the compiled gateway and tester on a cycle-accurate
+ATmega2560 simulator against the ROM, in both wirings. That measures
+whether the interrupt handlers keep up with the NES, and by how much.
 
 ## Documentation
 
@@ -74,5 +76,6 @@ its interrupt handlers keep up with the NES and by how much.
 - A gateway on the controller port, either:
   - an ESP32-C3 SuperMini through a level shifter — pinout in
     [`docs/running.md`](docs/running.md), or
-  - an Arduino Mega 2560, which is 5 V and wires straight in — see
+  - an Arduino Mega 2560, which is 5 V and wires straight in, or takes an
+    RJ45 jack plugged straight into its header — see
     [`docs/mega.md`](docs/mega.md).

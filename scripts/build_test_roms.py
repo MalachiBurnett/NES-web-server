@@ -3,6 +3,8 @@
 These are not the web server - they exercise the controller port link
 so faults can be isolated one wire at a time.  Neither has any site
 data to inject, which is why they do not go through build_rom.py.
+Both come from src/nes/debug.asm; the D0 test is the same file
+assembled with D0_ONLY defined.
 
     python scripts/build_test_roms.py          # both
     python scripts/build_test_roms.py d0       # just the D0 test
@@ -15,21 +17,23 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# key: (output, description, asm6f defines)
 ROMS = {
-    "d0":   ("d0test.asm", "nes_d0_test.nes",   "D0 line test"),
-    "link": ("debug.asm",  "nes_link_test.nes", "five phase link test"),
+    "d0":   ("nes_d0_test.nes",   "D0 line test",         ["D0_ONLY"]),
+    "link": ("nes_link_test.nes", "five phase link test", []),
 }
+SOURCE = "debug.asm"
 
 def build(key):
-    source, out, label = ROMS[key]
+    out, label, defines = ROMS[key]
     assembler = os.path.join(ROOT, "tools", "assembler", "assemble.exe")
     src_dir = os.path.join(ROOT, "src", "nes")
     output = os.path.join(ROOT, "build", out)
 
-    print("Assembling %s (%s)..." % (label, source))
+    print("Assembling %s (%s%s)..." % (label, SOURCE, "".join(" -d" + d for d in defines)))
     try:
         r = subprocess.run(
-            [assembler, source, output],
+            [assembler] + ["-d" + d for d in defines] + [SOURCE, output],
             cwd=src_dir,
             capture_output=True,
             text=True,

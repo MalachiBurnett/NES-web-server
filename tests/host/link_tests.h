@@ -1,10 +1,10 @@
 // The link layer's unit tests: framing, and everything a hot plug can
 // throw at it - half frames, half responses, contact bounce, and a port
-// with nothing on it.  Shared by both gateways, so the Mega port is held
-// to exactly the tests the ESP32 original passes.
+// with nothing on it.  Every build of the gateway - each board, each
+// wiring - is held to exactly these tests.
 //
-// Include after a shim (arduino_shim.h or avr_shim.h), its sketch, and
-// harness.h, then call runLinkTests().
+// Include after arduino_shim.h, the sketch, and harness.h, then call
+// runLinkTests().
 #pragma once
 
 #include <cstdint>
@@ -15,10 +15,16 @@
 // ~2ms quiet hold before every poll.
 static const uint32_t BIT_US = 40, HOLD_US = 2500, STROBE_US = 100;
 
+// A wiring with no interrupt on OUT0 just has the level change: the
+// gateway looks at it on the next clock.
 static void nesSetOut0(bool v) {
   bool prev = simInputLevel(PIN_NES_DATA_IN);
   simSetInput(PIN_NES_DATA_IN, v);
+#if OUT0_INTERRUPT
   if (prev && !v) onStrobe();
+#else
+  (void)prev;
+#endif
 }
 
 static bool nesReadD0(uint32_t after = BIT_US) {
@@ -32,10 +38,12 @@ static bool wireHigh() { return simGatewayOutput(PIN_NES_DATA_OUT); }
 
 enum Poll { POLL_IDLE, POLL_REQUEST, POLL_JUNK };
 
-// main.asm's PollRequest
+// main.asm's PollRequest.  The gateway's fetch loop, which runs all the
+// while a request is pending, gets a look in during the quiet hold.
 static Poll nesPoll(uint8_t *idOut) {
   nesSetOut0(true);
   g_micros += HOLD_US;
+  dropIfQuiet(g_micros);
   nesSetOut0(false);
   g_micros += STROBE_US;
   for (int i = 0; i < 8; i++)
@@ -43,6 +51,30 @@ static Poll nesPoll(uint8_t *idOut) {
   if (!nesReadD0()) return POLL_IDLE;
   uint16_t v = 0;
   for (int i = 0; i < 16; i++) v = (v >> 1) | (nesReadD0() ? 0x8000 : 0);
+  if (((v ^ (v >> 8)) & 0xFF) != 0xFF) return POLL_JUNK;
+  *idOut = v & 0xFF;
+  return POLL_REQUEST;
+}
+
+// The same poll, with the gateway only arriving - booted, or plugged in -
+// after the strobe and the NES's first `missed` reads.  Until then
+// nothing drives D0, which the NES reads as 0.
+static Poll nesPollJoinedLate(int missed, uint8_t *idOut) {
+  simSetInput(PIN_NES_DATA_IN, true);
+  g_micros += HOLD_US;
+  simSetInput(PIN_NES_DATA_IN, false);
+  g_micros += STROBE_US;
+  int reads = 0;
+  auto read = [&]() -> bool {
+    if (reads++ >= missed) return nesReadD0();
+    g_micros += BIT_US;
+    return false;
+  };
+  for (int i = 0; i < 8; i++)
+    if (read()) return POLL_JUNK;
+  if (!read()) return POLL_IDLE;
+  uint16_t v = 0;
+  for (int i = 0; i < 16; i++) v = (v >> 1) | (read() ? 0x8000 : 0);
   if (((v ^ (v >> 8)) & 0xFF) != 0xFF) return POLL_JUNK;
   *idOut = v & 0xFF;
   return POLL_REQUEST;
@@ -191,17 +223,20 @@ static void runLinkTests() {
   nesRespond(1, pkt, 300);
   check(rxComplete, "    and the retry succeeds");
 
-  // Plugged in after the NES strobed: the gateway missed the edge and
-  // sees only the clocks of a frame it never armed.
-  request(1);
-  g_micros += HOLD_US;
-  simSetInput(PIN_NES_DATA_IN, false);
-  uint8_t zeros = 0;
-  for (int i = 0; i < 25; i++) zeros += !nesReadD0();
-  check(zeros == 25 && linkState == LINK_IDLE, "joining partway through a poll hands the NES only zeros");
-  check(nesPoll(&id) == POLL_REQUEST && id == 1, "    and the next poll carries the request");
-  nesRespond(1, pkt, 300);
-  check(rxComplete, "    which is served");
+  // Arriving after the NES strobed, a gateway either missed the poll or
+  // - with no interrupt on OUT0 - takes its first clock for the start of
+  // one, and hands over a frame that is out of step.  The NES must not
+  // mistake either for a request.
+  bool neverTaken = true, recovers = true;
+  for (int missed : {1, 4, 8}) {
+    request(1);
+    if (nesPollJoinedLate(missed, &id) == POLL_REQUEST) neverTaken = false;
+    if (nesPoll(&id) != POLL_REQUEST || id != 1) { recovers = false; continue; }
+    nesRespond(1, pkt, 300);
+    if (!rxComplete) recovers = false;
+  }
+  check(neverTaken, "joining partway through a poll never hands the NES a request");
+  check(recovers, "    the next poll carries the request, which is served");
 
   // Plugged in, or rebooted, while the NES streams a response blind.
   // With no clock seen for ages the first data edge looks like a poll,

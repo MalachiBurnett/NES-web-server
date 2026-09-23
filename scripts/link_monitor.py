@@ -6,7 +6,7 @@ log file, so the session can be pasted somewhere afterwards.
     python scripts/link_monitor.py [PORT] [LOGFILE]
 
 Defaults: COM3, link-test.log.  Type commands (d0 1, d0 0, d0 sq, zero,
-?) and press enter.  Ctrl-C to quit.
+pins, ?) and press enter.  Ctrl-C to quit.
 """
 import sys
 import threading
@@ -45,7 +45,7 @@ def reader(port, log):
 def main():
     global stop
     try:
-        port = serial.Serial(PORT, 115200, timeout=0.2)
+        port = serial.Serial(PORT, 250000, timeout=0.2)
     except Exception as e:
         print("could not open %s: %s" % (PORT, e))
         return 1
@@ -54,7 +54,7 @@ def main():
     log.write("\n=== session %s ===\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
 
     print("connected to %s, logging to %s" % (PORT, LOG))
-    print("type a command and press enter (d0 1 | d0 0 | d0 sq | zero | ?)")
+    print("type a command and press enter (d0 1 | d0 0 | d0 sq | zero | pins | ?)")
     print("ctrl-c to quit\n")
 
     t = threading.Thread(target=reader, args=(port, log), daemon=True)

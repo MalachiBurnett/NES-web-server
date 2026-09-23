@@ -1,14 +1,12 @@
 // The NES side of the end to end tests: the 6502 core (cpu6502.h) running
 // the real assembled ROM, with $4016 wired through a model of the cable to
-// a gateway's real interrupt handlers.  Shared by both gateways, so the
-// ESP32 firmware and the Mega port run against the same ROM, cable and
-// hot plug schedule.
+// the gateway's real interrupt handlers.  Every build of the gateway runs
+// against the same ROM, cable and hot plug schedule.
 //
 // The cable can be pulled out and pushed back in (with contact bounce)
 // at any point in a transfer.
 //
-// Include after a shim (arduino_shim.h or avr_shim.h), its sketch, and
-// harness.h.
+// Include after arduino_shim.h, the sketch, and harness.h.
 #pragma once
 
 #include <vector>
@@ -39,10 +37,15 @@ static uint64_t clockPulses = 0;
 static uint64_t strobes = 0;         // OUT0 falling edges from the NES
 static uint64_t sendsShown = 0;      // times the ROM showed COL_SEND
 
+// With no interrupt on OUT0, the gateway sees the level at its next clock.
 static void gwSetOut0(bool level) {
   bool prev = simInputLevel(PIN_NES_DATA_IN);
   simSetInput(PIN_NES_DATA_IN, level);
+#if OUT0_INTERRUPT
   if (prev && !level) onStrobe();
+#else
+  (void)prev;
+#endif
 }
 
 static void gwSetClk(bool level) {

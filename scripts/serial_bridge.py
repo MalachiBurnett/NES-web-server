@@ -5,13 +5,13 @@ Each request is forwarded to the gateway as a single line (its own
 line-based protocol, see loop()/serve() in the firmware), and the HTTP
 response the gateway writes back is relayed to the client.
 
-Two gateways speak that protocol:
+The gateway (src/firmware/NES_router) behaves differently by board:
 
-- NES_router (ESP32-C3) decompresses pages itself, so its responses are
+- On an ESP32-C3 it decompresses pages itself, so its responses are
   relayed unchanged.
-- NES_router_mega (Arduino Mega 2560) has too little RAM for that. It
-  sends each page exactly as the cartridge stores it, marked with an
-  "X-NES-Packet: nhf2" header, and this bridge decompresses it.
+- An Arduino Mega 2560 has too little RAM for that. It sends each page
+  exactly as the cartridge stores it, marked with an "X-NES-Packet: nhf2"
+  header, and this bridge decompresses it.
 
 The gateway handles one request at a time - fetching a page from the NES
 takes ~0.7s, longer if the link has to retry, and the gateway gives up
@@ -35,7 +35,8 @@ import serial.tools.list_ports
 import emulate_rom
 
 RESPONSE_TIMEOUT = 8.0   # covers the gateway's 5s fetch deadline with margin
-LINE_TIMEOUT = 2.0       # max time to wait for any single line while within budget
+READ_TIMEOUT = 0.5       # the port's own timeout, set once when it is opened
+LINE_TIMEOUT = 2.0       # headers or body stalling this long: the gateway has gone
 BOOT_TIMEOUT = 4.0       # how long to wait for the gateway's "online" line
 PACKET_HEADER = "X-NES-Packet"
 
@@ -52,32 +53,51 @@ def autodetect_port():
     return None
 
 
+# Never set ser.timeout once the port is open. On Windows every change
+# re-applies the whole port configuration, and the Arduino Mega's USB chip
+# answers that by restarting its serial receiver - mid-byte, if a response
+# is arriving - which garbles and drops bytes until it falls back into
+# step. So the port keeps READ_TIMEOUT, and the deadlines are kept here.
+_pending = bytearray()
+
+
+def _fill(deadline):
+    """Wait for more bytes from the gateway, until the deadline. False if
+    none came."""
+    while time.monotonic() < deadline:
+        chunk = ser.read(max(1, ser.in_waiting))
+        if chunk:
+            _pending.extend(chunk)
+            return True
+    return False
+
+
 def _read_line(deadline):
-    """Read one line from the gateway, honouring both the per-line and
-    overall deadlines. Returns the decoded, stripped line, or None on
-    timeout."""
-    remaining = deadline - time.monotonic()
-    if remaining <= 0:
-        return None
-    ser.timeout = min(LINE_TIMEOUT, remaining)
-    raw = ser.readline()
-    if not raw:
-        return None
+    """Read one line from the gateway by the deadline. Returns the decoded,
+    stripped line, or None on timeout."""
+    while b"\n" not in _pending:
+        if not _fill(deadline):
+            return None
+    end = _pending.index(b"\n") + 1
+    raw = bytes(_pending[:end])
+    del _pending[:end]
     return raw.decode("latin-1").rstrip("\r\n")
 
 
 def _read_exact(n, deadline):
-    data = bytearray()
-    while len(data) < n:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
+    """Up to n bytes. Fewer means the gateway stalled for LINE_TIMEOUT or
+    the overall deadline passed."""
+    while len(_pending) < n:
+        if not _fill(min(deadline, time.monotonic() + LINE_TIMEOUT)):
             break
-        ser.timeout = min(LINE_TIMEOUT, remaining)
-        chunk = ser.read(n - len(data))
-        if not chunk:
-            break
-        data += chunk
-    return bytes(data)
+    data = bytes(_pending[:n])
+    del _pending[:n]
+    return data
+
+
+def _reset_input():
+    ser.reset_input_buffer()
+    _pending.clear()
 
 
 def wait_for_gateway(timeout=BOOT_TIMEOUT):
@@ -129,10 +149,12 @@ def fetch(path):
     a packet that does not decode."""
     deadline = time.monotonic() + RESPONSE_TIMEOUT
 
-    ser.reset_input_buffer()
+    _reset_input()
     ser.write(f"GET {path} HTTP/1.1\n".encode("ascii", errors="ignore"))
     ser.flush()
 
+    # The gateway can be silent for seconds while it fetches the page, so
+    # only the overall deadline applies until the status line arrives.
     status_line = None
     while True:
         line = _read_line(deadline)
@@ -153,7 +175,7 @@ def fetch(path):
 
     headers = {}
     while True:
-        line = _read_line(deadline)
+        line = _read_line(min(deadline, time.monotonic() + LINE_TIMEOUT))
         if line is None:
             raise TimeoutError("connection to the gateway dropped mid-response")
         if line == "":
@@ -209,8 +231,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial-port", default=os.environ.get("NES_BRIDGE_SERIAL_PORT"),
                          help="e.g. COM3 or /dev/ttyACM0 (auto-detected if omitted and only one candidate is present)")
-    parser.add_argument("--baud", type=int, default=int(os.environ.get("NES_BRIDGE_BAUD", "115200")),
-                         help="115200 for the Arduino Mega; ignored by the ESP32's native USB CDC")
+    parser.add_argument("--baud", type=int, default=int(os.environ.get("NES_BRIDGE_BAUD", "250000")),
+                         help="250000 for the Arduino Mega; ignored by the ESP32's native USB CDC")
     parser.add_argument("--host", default=os.environ.get("NES_BRIDGE_HOST", "127.0.0.1"),
                          help="bind address for the HTTP side (default: localhost only)")
     parser.add_argument("--port", type=int, default=int(os.environ.get("NES_BRIDGE_PORT", "8080")),
@@ -226,7 +248,7 @@ def main():
         sys.exit(1)
 
     print(f"Opening {port} @ {args.baud}...")
-    ser = serial.Serial(port, args.baud, timeout=LINE_TIMEOUT)
+    ser = serial.Serial(port, args.baud, timeout=READ_TIMEOUT)
     wait_for_gateway()
 
     httpd = ThreadingHTTPServer((args.host, args.port), BridgeHandler)

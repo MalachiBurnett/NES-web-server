@@ -157,6 +157,14 @@ of OUT0 held high with no clocks at all. The gateway counts an OUT0 falling
 edge as a poll only if no clock arrived in the previous `LINK_QUIET_US`
 (1ms), well clear of both.
 
+Where OUT0 has no interrupt of its own (the Arduino Mega's RJ45 wiring), the
+gateway recognises the poll at its first clock instead: the first clock after
+`LINK_QUIET_US` of quiet, with OUT0 low. The NES has already sampled that
+clock's bit, but the frame's first bit is a zero, which an idle gateway is
+giving it anyway. What makes the line idle is the fetch loop dropping a
+stale transfer once the line has been quiet for `LINK_QUIET_US`, which
+always happens during the poll's ~2ms hold.
+
 **Every poll is a fresh start.** Whatever the gateway thought was going on,
 a poll means the NES has moved on, so it drops it and begins a new frame.
 
@@ -180,7 +188,7 @@ What each kind of hot plug looks like:
 |---|---|
 | Plugged in, nothing pending | Contact bounce can look like a poll, but with nothing to ask the gateway only ever sends zeros. |
 | Plugged in with a request waiting | Bounce may arm a frame nobody reads; the next real poll resets it and carries the request. |
-| Plugged in partway through a poll | The gateway missed that strobe, so it stays idle and the NES reads zeros. The next poll carries the request. |
+| Plugged in partway through a poll | The gateway missed that strobe, so it stays idle and the NES reads zeros. Without an OUT0 interrupt it takes the first clock it sees for the start of a poll instead, and its frame reaches the NES out of step: the ready flag lands late, so the NES reads an idle poll. Either way, the next poll carries the request. |
 | Plugged in while the NES streams a response | The first data edge follows a quiet line and passes for a poll. The gateway takes the rest for a response, which fails the echo or checksum. The NES's next real poll puts both back in step. |
 | Pulled mid-response | Clocks stop and the gateway drops the transfer after 1ms. Back in within a second, the retry just works; left out, the fetch fails after 1s. The NES finishes sending into nothing and goes back to polling. |
 | Pulled, seen from the NES | A floating D0 reads as ones, which fail the preamble: red screen, nothing sent. If it floats low instead, it reads as an idle gateway. |
@@ -224,27 +232,28 @@ python scripts/build_rom.py
 python tests/run_tests.py
 ```
 
-`tests/run_tests.py` runs, for both gateways:
+`tests/run_tests.py` compiles the gateway's one `.ino` for the PC once per
+build — the ESP32-C3, the Arduino Mega, and the Mega on its RJ45 wiring —
+behind a small Arduino shim (`arduino_shim.h`), and runs each through:
 
 1. `build_rom.py`'s encoder against `emulate_rom.py`'s decoder, byte for byte.
-2. `tests/host/test_gateway.cpp` and `test_mega_gateway.cpp` — each
-   gateway's real `.ino` compiled for the PC behind a small Arduino shim
-   (`arduino_shim.h`, `avr_shim.h`), through the same link layer tests
-   (`link_tests.h`): half frames, half responses, bad echoes and checksums,
-   contact bounce, and a flash cart menu. The ESP32's decoder, and its
-   rejection of malformed packets, are tested here too.
-3. `tests/host/test_rom_link.cpp` and `test_mega_link.cpp` — the **assembled
-   ROM** on a small 6502 core (`nes_sim.h`) whose `$4016` is wired through a
-   model of the cable to each firmware's interrupt handlers. Every page must
-   arrive byte identical, then the cable is pulled and replugged at chosen
-   and then random moments in 40 fetches, all of which must come through
-   intact.
+2. `tests/host/test_gateway.cpp` — start-up, the RAM budget, and the link
+   layer tests (`link_tests.h`): half frames, half responses, bad echoes and
+   checksums, contact bounce, and a flash cart menu. The ESP32's decoder,
+   and its rejection of malformed packets, are tested here too.
+3. `tests/host/test_link.cpp` — the **assembled ROM** on a small 6502 core
+   (`nes_sim.h`) whose `$4016` is wired through a model of the cable to the
+   firmware's interrupt handlers, down to the HTTP the firmware writes. Every
+   page must arrive byte identical, then the cable is pulled and replugged
+   at chosen and then random moments in 40 fetches, all of which must come
+   through intact.
 4. `serial_bridge.py`, fed the HTTP the Mega firmware wrote in 3, which must
    decompress every page back to exactly what went into the ROM.
-5. `tests/host/test_mega_avr.cpp`, when `arduino-cli` and the AVR core are
-   installed — the Mega firmware compiled as it would be flashed, run cycle
-   for cycle on an ATmega2560 simulator against the ROM on a 6502 with every
-   port access at its real time. See [`mega.md`](mega.md#timing).
+5. With `arduino-cli`, both sketches compiled as they would be flashed, for
+   every build whose core is installed. Then `tests/host/test_mega_avr.cpp`
+   runs the Mega's gateway and tester cycle for cycle on an ATmega2560
+   simulator, in both wirings, against the ROM on a 6502 with every port
+   access at its real time. See [`mega.md`](mega.md#timing).
 
 Tests 3 to 5 exercise the actual shipped bytes on both sides, so a change to
 the timing constants, the frame layout or the packet format shows up

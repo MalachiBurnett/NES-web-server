@@ -6,24 +6,39 @@ server ROM misbehaves and you need to know *which* line is at fault.
 
 | | |
 |---|---|
-| NES side | [`src/nes/debug.asm`](../src/nes/debug.asm) → `build/nes_link_test.nes` |
-| smallest test | [`src/nes/d0test.asm`](../src/nes/d0test.asm) → `build/nes_d0_test.nes`, with [`src/firmware/NES_d0test/`](../src/firmware/NES_d0test/) |
-| ESP32 side | [`src/firmware/NES_debug/NES_debug.ino`](../src/firmware/NES_debug/NES_debug.ino) |
-| Arduino Mega side | [`src/firmware/NES_debug_mega/NES_debug_mega.ino`](../src/firmware/NES_debug_mega/NES_debug_mega.ino) — same commands and counters, plus how long each input spent high |
+| NES side | [`src/nes/debug.asm`](../src/nes/debug.asm) → `build/nes_link_test.nes`, the five phase link test |
+| smallest test | the same file with `D0_ONLY` defined → `build/nes_d0_test.nes`, which only shows what it reads on D0 |
+| gateway side | [`src/firmware/NES_debug/NES_debug.ino`](../src/firmware/NES_debug/NES_debug.ino), for the ESP32-C3 or either Arduino Mega wiring |
 
 ```bash
 python scripts/build_test_roms.py
 ```
 
+`build_test_roms.py d0` or `link` builds just one. The D0 test is `debug.asm`
+assembled with `-dD0_ONLY`, asm6f's equivalent of `-D` for a C compiler:
+`IFDEF D0_ONLY` in the source drops every phase but the first.
+
+Then flash the tester for your board. ESP32-C3:
+
 ```bash
 arduino-cli compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc --upload -p COM3 src/firmware/NES_debug
 ```
 
-or, for the Mega (check its port letter first):
+Arduino Mega, header wiring (check its port letter first):
 
 ```bash
-arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 --upload -p COM4 src/firmware/NES_debug_mega
+arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 --upload -p COM4 src/firmware/NES_debug
 ```
+
+Arduino Mega, RJ45 wiring ([`mega.md`](mega.md#rj45-wiring)):
+
+```bash
+arduino-cli compile --fqbn arduino:avr:mega:cpu=atmega2560 --build-property "compiler.cpp.extra_flags=-DNES_WIRING_RJ45" --upload -p COM4 src/firmware/NES_debug
+```
+
+It announces its pins when it starts, e.g.
+`# Arduino Mega link tester online. CLK on pin 12, OUT0 on 9, D0 on 13.`
+If those are not where your wires go, it was built for the other wiring.
 
 **`CDCOnBoot=cdc` is not optional.** The bare `esp32:esp32:esp32c3` FQBN
 defaults *USB CDC On Boot* to Disabled, which routes `Serial` to UART0 on
@@ -33,13 +48,28 @@ monitor connects normally and shows nothing at all. The same flag is
 needed when reflashing the gateway in `src/firmware/NES_router`.
 
 Neither side waits for the other. The ROM cycles five phases forever;
-the tester prints counters twice a second. You read the TV to see which
-phase you are in and the serial log to see what actually arrived. Nothing
-can go out of sync, which is the point — a handshake is exactly what we
-are trying to test.
+the tester prints counters twice a second:
+
+```
+clk=1737   out0=193    | clkHigh=100% out0High= 85% d0=0 (wire high)
+```
+
+`clk` and `out0` are falling edges in that half second, and the
+percentages are how much of it each line spent high. You read the TV to see
+which phase you are in and the serial log to see what actually arrived.
+Nothing can go out of sync, which is the point — a handshake is exactly
+what we are trying to test.
 
 Counters are **per report window**, not cumulative, so a burst appears as
 one large number and then falls back to zero.
+
+## The D0 test
+
+`build/nes_d0_test.nes` is phase 1 below and nothing else: red while the
+NES reads 0, green while it reads 1. It never touches OUT0, so the console
+drives nothing into the port. Flash the tester, then type `d0 1` and `d0 0`
+and watch the screen follow. It is the smallest thing that can work, so try
+it first when nothing else does.
 
 ## The five phases
 
@@ -94,9 +124,19 @@ in the log is suspect.
 | `d0 1` | NES reads 1, wire low — phase 1 should show solid green |
 | `d0 sq` | 1 Hz square wave — phase 1 should alternate |
 | `zero` | reset the counters |
+| `pins` | watch every free pin for a second, and show where CLK and OUT0 really landed |
+| `drive` | ESP32 only, NES **off**: drive the CLK and OUT0 pads high and low and read them back, to prove the pads themselves |
 | `?` | command list, and the table above |
 
-`arduino-cli monitor -p COM3 -c baudrate=115200` works, or use
+`pins` prints each pin's level, time spent high, and falls in the second,
+and marks where CLK and OUT0 should be. With the web server ROM running,
+OUT0 shows a few hundred falls and ~85% high. CLK shows ~100% high with
+falls. A pin with nothing on it has no falls; on the Mega its pull-up also
+holds it at 100% high. The CLK pulse is
+shorter than the Mega's trip round the sampling loop, so there it catches
+only a fraction of the pulses — but any at all marks the wire.
+
+`arduino-cli monitor -p COM3 -c baudrate=250000` works, or use
 `python scripts/link_monitor.py`, which does the same thing but timestamps
 every line and tees the session to `link-test.log`.
 

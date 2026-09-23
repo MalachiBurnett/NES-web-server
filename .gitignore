@@ -2,22 +2,13 @@ __pycache__/
 *.pyc
 .venv/
 
-# host test binaries
-build/test_gateway
-build/test_gateway.exe
-build/test_rom_link
-build/test_rom_link.exe
-build/test_mega_gateway
-build/test_mega_gateway.exe
-build/test_mega_link
-build/test_mega_link.exe
-build/test_mega_avr
-build/test_mega_avr.exe
+# host test binaries, one per build of the firmware
+build/test_*
 
-# the Mega firmware, compiled by run_tests.py for test_mega_avr
-build/mega_fw/
+# every sketch in every build, compiled by run_tests.py
+build/fw/
 
-# Mega gateway responses saved by test_mega_link for the bridge test
+# Mega gateway responses saved by test_link for the bridge test
 build/mega_http/
 
 # editor/tooling config

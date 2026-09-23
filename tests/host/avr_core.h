@@ -1,9 +1,9 @@
 // An ATmega2560, enough of one to run the Arduino Mega gateway's real
 // compiled firmware cycle for cycle: every instruction avr-gcc emits for
 // it, with its clock cycles, and the peripherals that firmware and the
-// Arduino core use - ports E and G, external interrupts INT4 and INT5,
-// timer 0 (millis and micros) and USART0.  Any other register just reads
-// back what was written to it.
+// Arduino core use - ports B, E, G and H, external interrupts INT4 and
+// INT5, pin change interrupt PCINT0, timer 0 (millis and micros) and
+// USART0.  Any other register just reads back what was written to it.
 //
 // Time is counted in clock cycles at 16MHz, 62.5ns each.
 #pragma once
@@ -22,18 +22,30 @@
 // their I/O address + 0x20).  From avr/iomxx0_1.h.
 namespace m2560 {
 enum : uint16_t {
+  PINB = 0x23, DDRB = 0x24, PORTB = 0x25,
   PINE = 0x2C, DDRE = 0x2D, PORTE = 0x2E,
   PING = 0x32, DDRG = 0x33, PORTG = 0x34,
-  TIFR0 = 0x35, EIFR = 0x3C, EIMSK = 0x3D,
+  TIFR0 = 0x35, PCIFR = 0x3B, EIFR = 0x3C, EIMSK = 0x3D,
   TCCR0B = 0x45, TCNT0 = 0x46,
   RAMPZ = 0x5B, EIND = 0x5C, SPL = 0x5D, SPH = 0x5E, SREG = 0x5F,
-  EICRB = 0x6A, TIMSK0 = 0x6E,
+  PCICR = 0x68, EICRB = 0x6A, PCMSK0 = 0x6B, TIMSK0 = 0x6E,
   UCSR0A = 0xC0, UCSR0B = 0xC1, UBRR0L = 0xC4, UBRR0H = 0xC5, UDR0 = 0xC6,
+  PINH = 0x100, DDRH = 0x101, PORTH = 0x102,
   RAMSTART = 0x200, RAMEND = 0x21FF,
 };
-enum { PORT_E = 0, PORT_G = 1 };
-enum { VEC_INT4 = 5, VEC_INT5 = 6, VEC_TIMER0_OVF = 23,
+enum { PORT_B = 0, PORT_E, PORT_G, PORT_H, NUM_PORTS };
+struct PortRegs { uint16_t pin, ddr, out; };
+static constexpr PortRegs PORT_REGS[NUM_PORTS] = {
+  {PINB, DDRB, PORTB}, {PINE, DDRE, PORTE}, {PING, DDRG, PORTG}, {PINH, DDRH, PORTH},
+};
+enum { VEC_INT4 = 5, VEC_INT5 = 6, VEC_PCINT0 = 9, VEC_TIMER0_OVF = 23,
        VEC_USART0_RX = 25, VEC_USART0_UDRE = 26, VEC_USART0_TX = 27 };
+
+// A pin change reaches PINx within a cycle or so, but PCIFR a few cycles
+// later: see "Pin Change Interrupt Timing" in the datasheet.  Here PINx
+// changes at once and the flag this many cycles after, which is if
+// anything the harder case for a handler that clears the flag itself.
+static constexpr unsigned PCIF_DELAY = 4;
 }  // namespace m2560
 
 class Mega2560 {
@@ -74,6 +86,8 @@ class Mega2560 {
     setSp(m2560::RAMEND);
     for (auto &port : drive) for (auto &pin : port) pin = -1;
     intLevel[0] = intLevel[1] = false;
+    pcLevelB = 0;
+    pcifQueue.clear();
     t0Prescale = 0;
     txBusy = udrFull = txc = false;
     rxQueue.clear();
@@ -90,19 +104,19 @@ class Mega2560 {
   // What a pin sits at: driven by the chip if it is an output, else by
   // whatever is outside (-1 for nothing), else the pull-up if PORTx is set.
   bool pinLevel(int port, int bit) const {
-    uint16_t ddr = port ? m2560::DDRG : m2560::DDRE, out = port ? m2560::PORTG : m2560::PORTE;
-    if ((mem[ddr] >> bit) & 1) return (mem[out] >> bit) & 1;
+    const m2560::PortRegs &r = m2560::PORT_REGS[port];
+    if ((mem[r.ddr] >> bit) & 1) return (mem[r.out] >> bit) & 1;
     if (drive[port][bit] >= 0) return drive[port][bit];
-    return (mem[out] >> bit) & 1;
+    return (mem[r.out] >> bit) & 1;
   }
 
   void driveInput(int port, int bit, int level) {
     drive[port][bit] = level;
-    updateExternalInterrupts();
+    updatePinInterrupts();
   }
 
   // --- the host on the other end of USART0 ---------------------------
-  void serialSend(const std::string &bytes, double baud = 115200) {
+  void serialSend(const std::string &bytes, double baud = 250000) {
     double frameTicks = 10 * 16000000.0 / baud;
     uint64_t t = rxQueue.empty() ? ticks : std::max(ticks, rxQueue.back().first);
     for (size_t i = 0; i < bytes.size(); i++)
@@ -130,8 +144,10 @@ class Mega2560 {
   static constexpr uint64_t NEVER = ~0ULL;
 
   bool holdInterrupts = false;       // SEI and RETI let one instruction run first
-  int8_t drive[2][8];
+  int8_t drive[m2560::NUM_PORTS][8];
   bool intLevel[2];                  // INT4 and INT5 pin levels, for edge detection
+  uint8_t pcLevelB = 0;              // port B levels, for pin change detection
+  std::deque<uint64_t> pcifQueue;    // when pin changes seen so far set PCIF0
   uint32_t t0Prescale = 0;
   bool txBusy = false, udrFull = false, txc = false;
   uint8_t udrTx = 0, txShift = 0, rxLast = 0;
@@ -230,17 +246,28 @@ class Mega2560 {
     for (int b = 0; b < 8; b++) v |= pinLevel(port, b) << b;
     return v;
   }
+  static int portOfPin(uint16_t a) {
+    for (int p = 0; p < m2560::NUM_PORTS; p++) if (m2560::PORT_REGS[p].pin == a) return p;
+    return -1;
+  }
+  static bool isPortOrDdr(uint16_t a) {
+    for (const auto &r : m2560::PORT_REGS) if (a == r.ddr || a == r.out) return true;
+    return false;
+  }
   // Flag and PINx registers act on the bits written as ones.
   static bool writesOnes(uint16_t a) {
-    return a == m2560::TIFR0 || a == m2560::EIFR || a == m2560::PINE || a == m2560::PING;
+    return a == m2560::TIFR0 || a == m2560::EIFR || a == m2560::PCIFR || portOfPin(a) >= 0;
   }
 
   uint8_t read(uint16_t a) {
     using namespace m2560;
     if (a > RAMEND) return 0;
+    int port = portOfPin(a);
+    if (port >= 0) {
+      if (onPinRead) onPinRead(a);
+      return pins(port);
+    }
     switch (a) {
-      case PINE: if (onPinRead) onPinRead(a); return pins(PORT_E);
-      case PING: if (onPinRead) onPinRead(a); return pins(PORT_G);
       case UCSR0A:
         return (rxFifo.empty() ? 0 : 0x80) | (txc ? 0x40 : 0) | (udrFull ? 0 : 0x20) | (mem[a] & 0x03);
       case UDR0:
@@ -254,28 +281,40 @@ class Mega2560 {
   void write(uint16_t a, uint8_t v) {
     using namespace m2560;
     if (a > RAMEND) return;
+    int port = portOfPin(a);
+    if (port >= 0) {
+      mem[PORT_REGS[port].out] ^= v;
+      portWritten(PORT_REGS[port].out);
+      return;
+    }
     switch (a) {
-      case PINE: mem[PORTE] ^= v; portWritten(PORTE); return;
-      case PING: mem[PORTG] ^= v; portWritten(PORTG); return;
-      case TIFR0: case EIFR: mem[a] &= ~v; return;
+      case TIFR0: case EIFR: case PCIFR: mem[a] &= ~v; return;
       case UCSR0A:
         if (v & 0x40) txc = false;
         mem[a] = (mem[a] & ~0x03) | (v & 0x03);
         return;
       case UDR0: udrTx = v; udrFull = true; startTx(); return;
+      case SREG:
+        // Setting I this way, like SEI, lets one more instruction run
+        // first.  avr-gcc's prologues depend on it: they write SREG back,
+        // then SPL, and an interrupt between the two would push onto a
+        // half-updated stack pointer.
+        if ((v & I) && !(mem[a] & I)) holdInterrupts = true;
+        mem[a] = v;
+        return;
       default:
         mem[a] = v;
-        if (a == PORTE || a == DDRE || a == PORTG || a == DDRG) portWritten(a);
-        else if (a == EICRB) updateExternalInterrupts();
+        if (isPortOrDdr(a)) portWritten(a);
+        else if (a == EICRB) updatePinInterrupts();
     }
   }
 
   void portWritten(uint16_t a) {
-    updateExternalInterrupts();
+    updatePinInterrupts();
     if (onPortWrite) onPortWrite(a);
   }
 
-  void updateExternalInterrupts() {
+  void updatePinInterrupts() {
     for (int n = 4; n <= 5; n++) {
       bool level = pinLevel(m2560::PORT_E, n);
       bool &prev = intLevel[n - 4];
@@ -284,6 +323,9 @@ class Mega2560 {
         mem[m2560::EIFR] |= 1 << n;
       prev = level;
     }
+    uint8_t levels = pins(m2560::PORT_B);
+    if ((levels ^ pcLevelB) & mem[m2560::PCMSK0]) pcifQueue.push_back(ticks + m2560::PCIF_DELAY);
+    pcLevelB = levels;
   }
 
   // --- peripherals ---
@@ -302,6 +344,11 @@ class Mega2560 {
   void advance(unsigned n) {
     using namespace m2560;
     ticks += n;
+
+    while (!pcifQueue.empty() && pcifQueue.front() <= ticks) {
+      mem[PCIFR] |= 1;
+      pcifQueue.pop_front();
+    }
 
     static const uint16_t prescale[8] = {0, 1, 8, 64, 256, 1024, 0, 0};
     if (uint16_t div = prescale[mem[TCCR0B] & 7]) {
@@ -336,6 +383,7 @@ class Mega2560 {
       bool pending = mode ? (mem[EIFR] >> n) & 1 : !pinLevel(PORT_E, n);
       if (enabled && pending) return n + 1;          // INT4 is vector 5
     }
+    if (mem[PCIFR] & mem[PCICR] & 1) return VEC_PCINT0;
     if (mem[TIFR0] & mem[TIMSK0] & 1) return VEC_TIMER0_OVF;
     if (!rxFifo.empty() && (mem[UCSR0B] & 0x80)) return VEC_USART0_RX;
     if (!udrFull && (mem[UCSR0B] & 0x20)) return VEC_USART0_UDRE;
@@ -348,6 +396,7 @@ class Mega2560 {
     push3(pc);
     mem[SREG] &= ~I;
     if (v == VEC_INT4 || v == VEC_INT5) mem[EIFR] &= ~(1 << (v - 1));
+    if (v == VEC_PCINT0) mem[PCIFR] &= ~1;
     if (v == VEC_TIMER0_OVF) mem[TIFR0] &= ~1;
     if (v == VEC_USART0_TX) txc = false;
     if (offSince != NEVER) {                          // interrupts were on, so nothing to track
@@ -501,7 +550,7 @@ class Mega2560 {
           if (mode == 2) p--;
           if (store) write(p, mem[d]); else mem[d] = read(p);
           if (mode == 1) p++;
-          setPair(reg, p);
+          if (mode) setPair(reg, p);    // only when it moved: LD r27, X loads into the pointer itself
           return 2;
         }
         case 0x4: case 0x5: case 0x6: case 0x7: {                      // LPM, ELPM
