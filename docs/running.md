@@ -93,6 +93,38 @@ firmware must come from the same version** — the frame format changed when
 hot plugging was added, and an old ROM with new firmware (or the reverse)
 never gets past `response was for a different page` or a red screen.
 
+## As a service on a Linux server
+
+`scripts/install_service.sh` runs the bridge under systemd, so it starts at
+boot and restarts if it crashes. For an Arduino Mega on the RJ45 wiring,
+serving on port 8090:
+
+```
+sudo bash scripts/install_service.sh --serial-port /dev/ttyACM0 --port 8090 --firmware-flags "-DNES_WIRING_RJ45"
+```
+
+It installs arduino-cli and the board's core too, because every start of
+the service first runs `scripts/update_firmware.sh`. That script does a
+`git pull`, rebuilds the gateway, and flashes the board, but only if the
+firmware changed. So deploying a change is:
+
+```
+sudo systemctl restart nes-serial-bridge
+```
+
+To flash again when nothing changed, delete `build/fw/service/flashed`
+first. `--no-firmware` leaves the board alone and only pulls and runs the
+bridge. Logs, including what the update step did:
+
+```
+journalctl -u nes-serial-bridge -f
+```
+
+The bridge only listens on `127.0.0.1`. To publish it, run a Cloudflare
+Tunnel on the same machine and point it at the bridge's port. With
+cloudflared in Docker, use host networking so the tunnel can reach
+`localhost`.
+
 ## If it does not work
 
 **Probe the wiring first.** With the web server ROM running and the bridge
