@@ -71,6 +71,27 @@ if [[ -n "${FQBN}" ]]; then
   sudo -u "${RUN_AS_USER}" -H arduino-cli core install "${CORE}" >/dev/null
 fi
 
+# ModemManager probes new USB serial devices for modems: it sends AT
+# commands and holds the port for a few seconds, which is long enough to
+# break a firmware upload or the bridge opening the port. Tell it to leave
+# this board alone, matched by its USB ids and serial number.
+if [[ -e "${SERIAL_PORT}" ]] && command -v udevadm >/dev/null; then
+  props="$(udevadm info -q property -n "${SERIAL_PORT}")"
+  vid="$(sed -n 's/^ID_VENDOR_ID=//p' <<<"${props}")"
+  pid="$(sed -n 's/^ID_MODEL_ID=//p' <<<"${props}")"
+  serial="$(sed -n 's/^ID_SERIAL_SHORT=//p' <<<"${props}")"
+  if [[ -n "${vid}" && -n "${pid}" ]]; then
+    echo "Telling ModemManager to leave ${SERIAL_PORT} alone..."
+    match="ATTRS{idVendor}==\"${vid}\", ATTRS{idProduct}==\"${pid}\""
+    [[ -n "${serial}" ]] && match+=", ATTRS{serial}==\"${serial}\""
+    echo "SUBSYSTEM==\"tty\", ${match}, ENV{ID_MM_DEVICE_IGNORE}=\"1\"" > /etc/udev/rules.d/99-nes-gateway.rules
+    udevadm control --reload
+    udevadm trigger --subsystem-match=tty
+  fi
+else
+  echo "${SERIAL_PORT} is not there right now: skipping the ModemManager rule. Re-run with the board plugged in."
+fi
+
 echo "Writing ${ENV_FILE}..."
 cat > "${ENV_FILE}" <<EOF
 NES_BRIDGE_SERIAL_PORT=${SERIAL_PORT}
