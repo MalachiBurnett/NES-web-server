@@ -27,6 +27,7 @@ a {
     text-decoration: none;
 }
 
+
 .controller-port {
     background: #111111;
     width: 20%;
@@ -50,13 +51,13 @@ main {
 }
 
 .upper-console {
-    background: #8A8A8A;
+    background: #c8c7cb;
     display: flex;
     height: 12em;
 }
 
 .lower-console {
-    background: #424242;
+    background: #4c4c4e;
     display: flex;
 }
 
